@@ -21,7 +21,8 @@ const translations = {
     pause: "Pause",
     resume: "Resume",
     stop: "Stop & Reset",
-    stopExplain: "Stops the timer, silences sound, and resets the countdown to a full interval. Use Resume to start again.",
+    stopExplain:
+      "Stops the timer, silences sound, and resets the countdown to a full interval. Use Resume to start again.",
     enableNotifs: "Enable Notifications",
     notifsEnabled: "Notifications Enabled",
     message:
@@ -50,7 +51,8 @@ const translations = {
     pause: "Pause",
     resume: "Fortsetzen",
     stop: "Stopp & Zurücksetzen",
-    stopExplain: "Stoppt den Timer, schaltet den Ton stumm und setzt den Countdown auf ein volles Intervall zurück. Mit „Fortsetzen“ neu starten.",
+    stopExplain:
+      "Stoppt den Timer, schaltet den Ton stumm und setzt den Countdown auf ein volles Intervall zurück. Mit „Fortsetzen“ neu starten.",
     enableNotifs: "Benachrichtigungen aktivieren",
     notifsEnabled: "Benachrichtigungen aktiviert",
     message:
@@ -85,10 +87,8 @@ const translations = {
     message: "嗨！温馨提醒一下——该去洗手间休息一下啦。保持舒适，照顾好自己哦 💧",
     enableSound: "启用声音",
     soundEnabled: "声音已启用",
-    iosInstallTip:
-      "在 iPhone 上请先安装：分享 → 添加到主屏幕，然后从主屏幕打开以启用通知和声音。",
-    iosPrimeTip:
-      "请先点一次“启用声音”，这样返回应用时 PeePal 才能播放提示音。",
+    iosInstallTip: "在 iPhone 上请先安装：分享 → 添加到主屏幕，然后从主屏幕打开以启用通知和声音。",
+    iosPrimeTip: "请先点一次“启用声音”，这样返回应用时 PeePal 才能播放提示音。",
     language: "语言",
     built: "由 💧 PeePal 构建 • 完全响应式设计",
     stoppedBanner: "已停止提醒并重置计时。点击“继续”重新开始一个新的间隔。",
@@ -105,14 +105,26 @@ const API_BASE =
     ? "https://bathroomreminder-zij5.onrender.com"
     : "http://localhost:4000");
 
+// IMPORTANT: keep client VAPID in env so it matches server VAPID_PUBLIC_KEY exactly
 const VAPID_PUBLIC_KEY =
+  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ??
   "BP7eA1OBdmDkLxg6-YrorPyglWaOeXqC3fNCwjyeTvcYGJYj_eMTh1qkfVFEApzl1q-dWTbF0naJh9dauCLCWXg";
 
+/* ----------------------- HELPERS ----------------------- */
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
   const rawData = atob(base64);
   return new Uint8Array([...rawData].map((c) => c.charCodeAt(0)));
+}
+
+// Always upsert subscription on server (idempotent)
+async function saveSubscription(sub: PushSubscription) {
+  await fetch(`${API_BASE}/api/save-subscription`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ subscription: sub }),
+  });
 }
 
 /* -------------- Server sync helper -------------- */
@@ -275,7 +287,42 @@ export default function Dashboard() {
     setIsStandalone(Boolean(standalone));
   }, []);
 
-  /* -------- Notifications enable + SW/VAPID hookup -------- */
+  /* ---------- AUTO-SUBSCRIBE if permission already granted ---------- */
+  useEffect(() => {
+    (async () => {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+      if (Notification.permission !== "granted") return;
+
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.ready;
+
+      // let SW resubscribe headlessly later
+      reg.active?.postMessage({
+        type: "SET_VAPID",
+        vapidKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        });
+      }
+
+      try {
+        await saveSubscription(sub);
+        setSubscription(sub);
+        setNotificationsEnabled(true);
+        await postPreferences(sub, frequency, language);
+      } catch (e) {
+        console.warn("[Auto-subscribe] failed", e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* -------- Notifications enable + SW/VAPID hookup (manual) -------- */
   const handleEnableNotifications = async () => {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
       alert("Push not supported.");
@@ -296,12 +343,9 @@ export default function Dashboard() {
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
         });
-        await fetch(`${API_BASE}/api/save-subscription`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subscription: sub }),
-        });
       }
+
+      await saveSubscription(sub);
 
       setSubscription(sub);
       setNotificationsEnabled(true);
@@ -410,9 +454,7 @@ export default function Dashboard() {
 
   // Clear timer & reset with an explanation
   const handleStop = () => {
-    const ok = window.confirm(
-      `${tDict.stop}\n\n${tDict.stopExplain}`
-    );
+    const ok = window.confirm(`${tDict.stop}\n\n${tDict.stopExplain}`);
     if (!ok) return;
     stop(); // stop audio immediately
     setIsRunning(false);
@@ -435,7 +477,6 @@ export default function Dashboard() {
   const handleChangeLanguage = (lang: Lang) => {
     setLanguage(lang);
     localStorage.setItem("peePalLang", lang);
-    // Immediately reflect on server if we have a subscription
     if (subscription) postPreferences(subscription, frequency, lang);
   };
   const cycleLanguage = () => {
@@ -472,8 +513,13 @@ export default function Dashboard() {
 
   // slosh angle
   const tick = useTicker();
-  const sloshAmp: MotionValue<number> = useTransform(progressSpring, (p: number) => (isRunning ? 1.8 + p * 1.2 : 0));
-  const sloshAngle: MotionValue<number> = useTransform([tick, sloshAmp], ([tt, aa]) => Math.sin((tt as number) / 900) * (aa as number));
+  const sloshAmp: MotionValue<number> = useTransform(progressSpring, (p: number) =>
+    isRunning ? 1.8 + p * 1.2 : 0
+  );
+  const sloshAngle: MotionValue<number> = useTransform(
+    [tick, sloshAmp],
+    ([tt, aa]) => Math.sin((tt as number) / 900) * (aa as number)
+  );
 
   // subtle shimmer
   const shimmer: MotionValue<number> = useTransform(tick, (tt) => (Math.sin(tt / 1200) + 1) / 2);
@@ -839,7 +885,9 @@ function Wave({
 }) {
   const t = useTicker();
   const phase = useTransform(t, (tt) => (tt / (dir === "left" ? 1400 : 1600)) % (Math.PI * 2));
-  const d: MotionValue<string> = useTransform([y, phase], ([yy, ph]) => wavePath(0, yy as number, 100, amp, density, ph as number));
+  const d: MotionValue<string> = useTransform([y, phase], ([yy, ph]) =>
+    wavePath(0, yy as number, 100, amp, density, ph as number)
+  );
   return (
     <motion.path
       d={d}
@@ -853,10 +901,22 @@ function Wave({
 }
 
 // Thin foam crest stroke following the surface
-function FoamCrest({ y, amp, speed, opacity = 0.6 }: { y: MotionValue<number>; amp: number; speed: number; opacity?: number }) {
+function FoamCrest({
+  y,
+  amp,
+  speed,
+  opacity = 0.6,
+}: {
+  y: MotionValue<number>;
+  amp: number;
+  speed: number;
+  opacity?: number;
+}) {
   const t = useTicker();
   const phase = useTransform(t, (tt) => (tt / 1500) % (Math.PI * 2));
-  const d: MotionValue<string> = useTransform([y, phase], ([yy, ph]) => waveTopPath(0, yy as number, 100, amp, ph as number));
+  const d: MotionValue<string> = useTransform([y, phase], ([yy, ph]) =>
+    waveTopPath(0, yy as number, 100, amp, ph as number)
+  );
   return (
     <motion.path
       d={d}
