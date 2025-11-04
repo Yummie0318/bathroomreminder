@@ -26,7 +26,7 @@ const copy = {
   en: {
     title: "Find Nearest Bathroom",
     usingLocation: "Using your current location",
-    locationRequired: "Location required",
+    locationRequired: "Location permission is required.",
     detecting: "Detecting…",
     refresh: "Refresh",
     refreshLocation: "Refresh location",
@@ -44,11 +44,12 @@ const copy = {
     allowRetry: "Allow & Retry",
     locationNeeded: "Location needed",
     howToEnable: "How to enable",
+    geoErrorGeneric: "Unable to get your location right now.",
   },
   de: {
     title: "Nächstes Badezimmer finden",
     usingLocation: "Verwendet Ihren aktuellen Standort",
-    locationRequired: "Standort erforderlich",
+    locationRequired: "Standortberechtigung ist erforderlich.",
     detecting: "Ermittle…",
     refresh: "Aktualisieren",
     refreshLocation: "Standort aktualisieren",
@@ -66,11 +67,12 @@ const copy = {
     allowRetry: "Erlauben & erneut versuchen",
     locationNeeded: "Standort benötigt",
     howToEnable: "So aktivieren",
+    geoErrorGeneric: "Ihr Standort kann derzeit nicht ermittelt werden.",
   },
   zh: {
     title: "寻找最近的洗手间",
     usingLocation: "正在使用您的当前位置",
-    locationRequired: "需要定位权限",
+    locationRequired: "需要定位权限。",
     detecting: "正在检测…",
     refresh: "刷新",
     refreshLocation: "刷新位置",
@@ -88,9 +90,32 @@ const copy = {
     allowRetry: "允许并重试",
     locationNeeded: "需要定位",
     howToEnable: "如何开启",
+    geoErrorGeneric: "暂时无法获取您的位置。",
   },
 } as const;
 type Lang = keyof typeof copy;
+
+/* ---------- TYPE LOCALIZATION (lowercased keys) ---------- */
+const typeMapLower = {
+  "public restroom": { en: "Public restroom", de: "Öffentliche Toilette", zh: "公共洗手间" },
+  "shopping mall": { en: "Shopping mall", de: "Einkaufszentrum", zh: "购物中心" },
+  "coffee shop": { en: "Coffee shop", de: "Café", zh: "咖啡店" },
+  restaurant: { en: "Restaurant", de: "Restaurant", zh: "餐厅" },
+  park: { en: "Park", de: "Park", zh: "公园" },
+  "gas station": { en: "Gas station", de: "Tankstelle", zh: "加油站" },
+  "convenience store": { en: "Convenience store", de: "Spätkauf", zh: "便利店" },
+  hotel: { en: "Hotel", de: "Hotel", zh: "酒店" },
+  place: { en: "Place", de: "Ort", zh: "地点" },
+  "fast food": { en: "Fast food", de: "Schnellimbiss", zh: "快餐" },
+  "fast food restaurant": { en: "Fast food restaurant", de: "Schnellrestaurant", zh: "快餐店" },
+} as const;
+
+function localizeType(type: string | undefined, lang: Lang) {
+  if (!type) return "";
+  const key = type.trim().toLowerCase();
+  const entry = (typeMapLower as any)[key];
+  return entry?.[lang] ?? type;
+}
 
 function haversine(a: LatLng, b: LatLng) {
   const R = 6371e3;
@@ -103,9 +128,8 @@ function haversine(a: LatLng, b: LatLng) {
   const c = 2 * Math.atan2(Math.sqrt(s1), Math.sqrt(1 - s1));
   return R * c;
 }
-function formatDistance(meters: number, lang: Lang) {
+function formatDistance(meters: number, _lang: Lang) {
   if (meters < 1000) return `${Math.round(meters)} m`;
-  // no need to localize unit precision here; UI keeps it compact
   return `${(meters / 1000).toFixed(1)} km`;
 }
 function openInMaps(lat: number, lon: number, name?: string) {
@@ -115,7 +139,7 @@ function openInMaps(lat: number, lon: number, name?: string) {
 }
 
 export default function MapPage() {
-  const [lang, setLang] = useState<Lang>("en"); // read user choice from Dashboard
+  const [lang, setLang] = useState<Lang>("en");
   const t = copy[lang];
 
   const [userLocation, setUserLocation] = useState<LatLng | null>(null);
@@ -125,13 +149,13 @@ export default function MapPage() {
   const [geoLoading, setGeoLoading] = useState(false);
   const gotFirstFix = useRef(false);
 
-  // pull saved language from Dashboard (peePalLang)
+  // read language saved by Dashboard
   useEffect(() => {
     const saved = (localStorage.getItem("peePalLang") as Lang | null) || "en";
     setLang(saved);
   }, []);
 
-  // --- Acquire Location ---
+  // Acquire Location
   const getLocation = () => {
     if (!navigator.geolocation) {
       setErrorMsg(t.locationRequired);
@@ -147,9 +171,7 @@ export default function MapPage() {
       },
       (err) => {
         setErrorMsg(
-          err.code === err.PERMISSION_DENIED
-            ? t.locationRequired
-            : "Unable to get your location right now."
+          err.code === err.PERMISSION_DENIED ? t.locationRequired : t.geoErrorGeneric
         );
         setGeoLoading(false);
       },
@@ -160,57 +182,58 @@ export default function MapPage() {
   useEffect(() => {
     getLocation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lang]); // if language changes, refresh header text immediately
+  }, [lang]);
 
-  // --- Fetch Suggestions whenever we have a location ---
+  // Fetch Suggestions when we have a location (pass lang to API)
   useEffect(() => {
     const fetchSuggestions = async () => {
       if (!userLocation) return;
       setLoading(true);
       try {
         const res = await fetch(
-          `/api/suggest_restrooms?lat=${userLocation.lat}&lon=${userLocation.lng}&radius=${DEFAULT_RADIUS}`
+          `/api/suggest_restrooms?lat=${userLocation.lat}&lon=${userLocation.lng}&radius=${DEFAULT_RADIUS}&lang=${lang}`
         );
         const data = await res.json();
 
         if (data?.suggestions?.length) {
           const normalized: Suggestion[] = data.suggestions.map((s: any) => ({
             name: s.name,
-            type: s.type ?? "Place",
+            type: s.type ?? "place",
             lat: Number(s.lat),
             lon: Number(s.lon),
             tips: s.tips,
           }));
           setSuggestions(normalized);
         } else {
+          // Local demo fallback + localized tips; types also localized via badge renderer
           setSuggestions([
             {
               name: "SM City Tuguegarao",
-              type: "Shopping mall",
+              type: "shopping mall",
               lat: userLocation.lat + 0.002,
               lon: userLocation.lng + 0.003,
               tips:
                 lang === "de"
-                  ? "Saubere öffentliche Toiletten – in der Haupthalle oder Food-Court."
+                  ? "Saubere öffentliche Toiletten – in der Haupthalle oder im Food-Court."
                   : lang === "zh"
                   ? "干净的公共洗手间——在中庭或美食广场附近。"
                   : "Clean public restrooms—look near the main atrium or food court.",
             },
             {
               name: "Vita Bella – Caritan Highway",
-              type: "Coffee shop",
+              type: "coffee shop",
               lat: userLocation.lat + 0.0015,
               lon: userLocation.lng + 0.0025,
               tips:
                 lang === "de"
-                  ? "友善 fragen：可否使用洗手间。"
+                  ? "Freundlich fragen, ob Sie die Toilette benutzen dürfen."
                   : lang === "zh"
                   ? "礼貌询问店员可否使用洗手间。"
                   : "Kindly ask staff to use the restroom.",
             },
             {
               name: "Starbucks SM City Tuguegarao",
-              type: "Coffee shop",
+              type: "coffee shop",
               lat: userLocation.lat + 0.0022,
               lon: userLocation.lng + 0.0028,
               tips:
@@ -232,8 +255,7 @@ export default function MapPage() {
   }, [userLocation, lang]);
 
   const withDistance = useMemo(() => {
-    if (!userLocation || !suggestions)
-      return [] as Array<Suggestion & { distance: number }>;
+    if (!userLocation || !suggestions) return [] as Array<Suggestion & { distance: number }>;
     return suggestions
       .map((s) => ({
         ...s,
@@ -250,7 +272,7 @@ export default function MapPage() {
           {/* Left: Back */}
           <div className="flex items-center">
             <button
-              onClick={() => window.location.assign("http://localhost:3000/")}
+              onClick={() => window.location.assign("https://bathroomreminder.vercel.app/")}
               className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-sky-900 hover:bg-sky-50 active:scale-[0.98]"
               aria-label={t.back}
               title={t.back}
@@ -341,7 +363,8 @@ export default function MapPage() {
         {/* Map area */}
         <motion.div
           layout
-          className="relative h-[55vh] lg:h-[calc(100dvh-150px)] rounded-3xl overflow-hidden border border-sky-100 shadow-md bg-white"
+          className="relative h:[55vh] lg:h-[calc(100dvh-150px)] rounded-3xl overflow-hidden border border-sky-100 shadow-md bg-white"
+          style={{ height: "55vh" }}
         >
           {userLocation ? (
             <MapComponent
@@ -417,7 +440,7 @@ export default function MapPage() {
                           <h3 className="font-semibold text-sky-900">{s.name}</h3>
                           {s.type && (
                             <span className="rounded-full border border-sky-200 bg-sky-50 text-sky-700 text-[10px] px-2 py-0.5 font-semibold">
-                              {s.type}
+                              {localizeType(s.type, lang)}
                             </span>
                           )}
                         </div>

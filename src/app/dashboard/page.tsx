@@ -30,6 +30,7 @@ const translations = {
     iosPrimeTip:
       "Tap “Enable Sound” once to let PeePal play a tone when you return to the app after a reminder.",
     language: "Language",
+    built: "Built with 💧 PeePal • Fully Responsive",
   },
   de: {
     title: "PeePal",
@@ -54,6 +55,7 @@ const translations = {
     iosPrimeTip:
       "Tippe einmal auf „Ton aktivieren“, damit PeePal beim Zurückkehren einen Ton abspielen kann.",
     language: "Sprache",
+    built: "Erstellt mit 💧 PeePal • Vollständig responsiv",
   },
   zh: {
     title: "PeePal",
@@ -77,6 +79,7 @@ const translations = {
     iosPrimeTip:
       "请先点一次“启用声音”，这样返回应用时 PeePal 才能播放提示音。",
     language: "语言",
+    built: "由 💧 PeePal 构建 • 完全响应式设计",
   },
 } as const;
 
@@ -618,8 +621,9 @@ export default function Dashboard() {
         </section>
 
         <footer className="text-center py-2.5 sm:py-3 text-[10px] sm:text-[11px] text-gray-400 border-t border-gray-100">
-          Built with 💧 PeePal • Fully Responsive
+          {tDict.built}
         </footer>
+
       </div>
 
       {/* SETTINGS MODAL */}
