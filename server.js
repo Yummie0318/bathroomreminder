@@ -73,9 +73,9 @@ app.post("/api/send-push", async (req, res) => {
   res.json({ results });
 });
 
-// Prepare Next.js then start server
+// ✅ Fix: Express 5 requires regex for catch-all routes
 nextApp.prepare().then(() => {
-  app.all("*", (req, res) => handle(req, res));
+  app.all(/.*/, (req, res) => handle(req, res));
 
   const PORT = process.env.PORT || 4000;
   app.listen(PORT, () => console.log(`[SERVER] Running on port ${PORT}`));
