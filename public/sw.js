@@ -38,7 +38,15 @@ self.addEventListener("push", (event) => {
     ],
   };
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  // Show the notification and notify clients to play audio
+  event.waitUntil(
+    (async () => {
+      await self.registration.showNotification(title, options);
+
+      const clientList = await clients.matchAll({ type: "window", includeUncontrolled: true });
+      clientList.forEach((client) => client.postMessage({ type: "PLAY_AUDIO" }));
+    })()
+  );
 });
 
 // 🧭 Handle Notification Clicks
@@ -52,9 +60,7 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
-        if (client.url.includes(targetUrl) && "focus" in client) {
-          return client.focus();
-        }
+        if (client.url.includes(targetUrl) && "focus" in client) return client.focus();
       }
       if (clients.openWindow) return clients.openWindow(targetUrl);
     })
@@ -65,13 +71,15 @@ self.addEventListener("notificationclick", (event) => {
 self.addEventListener("notificationclose", async () => {
   console.log("[SW] Notification closed — sending STOP_AUDIO");
   const clientList = await clients.matchAll({ type: "window", includeUncontrolled: true });
-  for (const client of clientList) client.postMessage("STOP_AUDIO");
+  clientList.forEach((client) => client.postMessage({ type: "STOP_AUDIO" }));
 });
 
 // 💤 Handle Local Notifications from Dashboard
 self.addEventListener("message", async (event) => {
   if (event.data?.type === "LOCAL_NOTIFY") {
     const bodyMessage = event.data.body || "Stay hydrated and take a quick bathroom break 💧";
+    const url = event.data.url || "/dashboard";
+
     console.log("[SW] Local notify triggered by page:", bodyMessage);
 
     await self.registration.showNotification("🚽 PeePal Reminder", {
@@ -82,6 +90,10 @@ self.addEventListener("message", async (event) => {
       requireInteraction: true,
       renotify: true,
       vibrate: [200, 100, 200],
+      data: { url },
     });
+
+    const clientList = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    clientList.forEach((client) => client.postMessage({ type: "PLAY_AUDIO" }));
   }
 });

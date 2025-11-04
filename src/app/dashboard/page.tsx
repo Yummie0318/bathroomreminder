@@ -89,7 +89,7 @@ export default function Dashboard() {
   const t = translations[language];
 
   // ----------------------------
-  // ENABLE NOTIFICATIONS (USER CLICK REQUIRED)
+  // ENABLE NOTIFICATIONS
   // ----------------------------
   const handleEnableNotifications = async () => {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
@@ -107,15 +107,29 @@ export default function Dashboard() {
       const reg = await navigator.serviceWorker.register("/sw.js");
       await navigator.serviceWorker.ready;
 
-      // Listen for STOP_AUDIO from SW
+      // Listen for messages from SW (PLAY_AUDIO / STOP_AUDIO)
       navigator.serviceWorker.addEventListener("message", (event) => {
-        if (event.data === "STOP_AUDIO" && audioRef.current) {
+        if (!event.data?.type) return;
+
+        if (event.data.type === "STOP_AUDIO" && audioRef.current) {
           audioRef.current.pause();
           audioRef.current.currentTime = 0;
           audioRef.current = null;
         }
+
+        if (event.data.type === "PLAY_AUDIO") {
+          if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = 0;
+          }
+          const audio = new Audio(ringtone);
+          audio.loop = true;
+          audio.play().catch(() => console.log("Audio blocked — user interaction required"));
+          audioRef.current = audio;
+        }
       });
 
+      // Subscribe to push
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
         sub = await reg.pushManager.subscribe({
@@ -174,7 +188,7 @@ export default function Dashboard() {
       setRemaining(remainingTime / 1000);
 
       if (remainingTime <= 0) {
-        triggerPushNotification();
+        sendLocalReminder();
         const newStart = Date.now();
         setLastStart(newStart);
         localStorage.setItem("peePalLastStart", String(newStart));
@@ -182,41 +196,7 @@ export default function Dashboard() {
     }, 1000);
 
     return () => clearInterval(intervalRef.current!);
-  }, [isRunning, lastStart, frequency, subscription]);
-
-  // ----------------------------
-  // TRIGGER NOTIFICATION + AUDIO
-  // ----------------------------
-  const triggerPushNotification = async () => {
-    try {
-      // Play ringtone
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-      }
-      const audio = new Audio(ringtone);
-      audio.loop = true;
-      await audio.play().catch(() => {
-        console.log("Audio playback deferred — user interaction required.");
-      });
-      audioRef.current = audio;
-
-      // Show notification via SW
-      if ("serviceWorker" in navigator && Notification.permission === "granted") {
-        const reg = await navigator.serviceWorker.ready;
-        reg.showNotification("🚽 PeePal Reminder", {
-          body: t.message,
-          icon: "/icons/icon-192.png",
-          requireInteraction: true,
-          tag: "pee-pal-reminder",
-          renotify: true,
-          vibrate: [200, 100, 200],
-        } as NotificationOptions);
-      }
-    } catch (err) {
-      console.error("Notification failed:", err);
-    }
-  };
+  }, [isRunning, lastStart, frequency]);
 
   // ----------------------------
   // CONTROLS
@@ -251,7 +231,7 @@ export default function Dashboard() {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const handleTestNotification = () => triggerPushNotification();
+  const handleTestNotification = () => sendLocalReminder();
 
   const handleChangeLanguage = (lang: "en" | "de" | "zh") => {
     setLanguage(lang);
@@ -269,19 +249,9 @@ export default function Dashboard() {
       type: "LOCAL_NOTIFY",
       body: message || t.message,
     });
-
-    // Play ringtone locally
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
-    const audio = new Audio(ringtone);
-    audio.loop = true;
-    await audio.play().catch(() => {
-      console.log("Audio playback deferred — user interaction required.");
-    });
-    audioRef.current = audio;
   };
+
+
 
   // ----------------------------
   // RENDER
