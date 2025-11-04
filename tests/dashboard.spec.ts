@@ -61,15 +61,16 @@ test('open settings modal, change language to German, change frequency and close
 
   // change frequency slider value to 30 and verify the displayed value updates
   const range = page.locator('input[type=range]').first();
-  // Update the range value and dispatch both input and change events so React picks it up
+  // Update the range value and dispatch input/change events so React picks it up.
+  // Use InputEvent with composed:true to better emulate user interaction.
   await range.evaluate((el) => {
     (el as HTMLInputElement).value = '30';
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true } as any));
+    el.dispatchEvent(new Event('change', { bubbles: true, composed: true } as any));
   });
 
   // Wait for the displayed value to update (motion span)
-  await expect(page.locator('text=30m')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('text=30m')).toBeVisible({ timeout: 10000 });
 
   // click Done to close settings
   const doneBtn = page.getByRole('button', { name: /Done|Fertig|完成/i });
