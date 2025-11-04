@@ -5,6 +5,7 @@ on:
     branches: [ main, dev, qa ]
   pull_request:
     branches: [ main, dev, qa ]
+  workflow_dispatch: {}
 
 jobs:
   playwright-tests:
