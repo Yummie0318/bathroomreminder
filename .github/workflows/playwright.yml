@@ -45,7 +45,7 @@ jobs:
           path: test-results/
 
       - name: 🔔 Notify QA Team (Optional)
-        if: failure()
+        if: failure() && secrets.SLACK_WEBHOOK_URL
         uses: slackapi/slack-github-action@v1.27.0
         with:
           payload: '{"text": "❌ Playwright QA tests failed on ${{ github.ref_name }}!"}'
