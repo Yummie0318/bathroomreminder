@@ -5,55 +5,70 @@ import { Droplet, Pause, Play, StopCircle, MapPin, Settings, X, Bell } from "luc
 import { motion, AnimatePresence } from "framer-motion";
 
 const translations = {
-    en: {
-      title: "PeePal",
-      subtitle: "Active Reminder",
-      nextReminder: "Next reminder in",
-      reminderFrequency: "Reminder Frequency",
-      testNotification: "Test Notification",
-      findBathroom: "Find Nearest Bathroom",
-      settings: "Settings",
-      done: "Done",
-      frequencyNote: "How often you want to be reminded 💧",
-      pause: "Pause",
-      resume: "Resume",
-      stop: "Stop",
-      message: "Hi there! Just a gentle reminder — it’s time for a quick bathroom break. Stay comfortable and take care 💧",
-    },
-    de: {
-      title: "PeePal",
-      subtitle: "Aktive Erinnerung",
-      nextReminder: "Nächste Erinnerung in",
-      reminderFrequency: "Erinnerungsfrequenz",
-      testNotification: "Testbenachrichtigung",
-      findBathroom: "Nächstes Badezimmer finden",
-      settings: "Einstellungen",
-      done: "Fertig",
-      frequencyNote: "Wie oft Sie erinnert werden möchten 💧",
-      pause: "Pause",
-      resume: "Fortsetzen",
-      stop: "Stopp",
-      message: "Hallo! Nur eine kleine Erinnerung – es ist Zeit für eine kurze Toilettenpause. Bleib entspannt und pass gut auf dich auf 💧",
-    },
-    zh: {
-      title: "PeePal",
-      subtitle: "活动提醒",
-      nextReminder: "下一次提醒",
-      reminderFrequency: "提醒频率",
-      testNotification: "测试通知",
-      findBathroom: "寻找最近的洗手间",
-      settings: "设置",
-      done: "完成",
-      frequencyNote: "您希望多久提醒一次 💧",
-      pause: "暂停",
-      resume: "继续",
-      stop: "停止",
-      message: "嗨！温馨提醒一下——该去洗手间休息一下啦。保持舒适，照顾好自己哦 💧",
-    },
-  };
+  en: {
+    title: "PeePal",
+    subtitle: "Active Reminder",
+    nextReminder: "Next reminder in",
+    reminderFrequency: "Reminder Frequency",
+    testNotification: "Test Notification",
+    findBathroom: "Find Nearest Bathroom",
+    settings: "Settings",
+    done: "Done",
+    frequencyNote: "How often you want to be reminded 💧",
+    pause: "Pause",
+    resume: "Resume",
+    stop: "Stop",
+    message:
+      "Hi there! Just a gentle reminder — it’s time for a quick bathroom break. Stay comfortable and take care 💧",
+  },
+  de: {
+    title: "PeePal",
+    subtitle: "Aktive Erinnerung",
+    nextReminder: "Nächste Erinnerung in",
+    reminderFrequency: "Erinnerungsfrequenz",
+    testNotification: "Testbenachrichtigung",
+    findBathroom: "Nächstes Badezimmer finden",
+    settings: "Einstellungen",
+    done: "Fertig",
+    frequencyNote: "Wie oft Sie erinnert werden möchten 💧",
+    pause: "Pause",
+    resume: "Fortsetzen",
+    stop: "Stopp",
+    message:
+      "Hallo! Nur eine kleine Erinnerung – es ist Zeit für eine kurze Toilettenpause. Bleib entspannt und pass gut auf dich auf 💧",
+  },
+  zh: {
+    title: "PeePal",
+    subtitle: "活动提醒",
+    nextReminder: "下一次提醒",
+    reminderFrequency: "提醒频率",
+    testNotification: "测试通知",
+    findBathroom: "寻找最近的洗手间",
+    settings: "设置",
+    done: "完成",
+    frequencyNote: "您希望多久提醒一次 💧",
+    pause: "暂停",
+    resume: "继续",
+    stop: "停止",
+    message: "嗨！温馨提醒一下——该去洗手间休息一下啦。保持舒适，照顾好自己哦 💧",
+  },
+};
 
-const audioFiles = { en: "/english.mp3", de: "/german.mp3", zh: "/Chinese.mp3" };
-const VAPID_PUBLIC_KEY = "BP7eA1OBdmDkLxg6-YrorPyglWaOeXqC3fNCwjyeTvcYGJYj_eMTh1qkfVFEApzl1q-dWTbF0naJh9dauCLCWXg";
+const audioFiles = {
+  en: "/english.mp3",
+  de: "/german.mp3",
+  zh: "/Chinese.mp3",
+};
+
+// 🔑 Use HTTPS URL for production; fallback to localhost for dev
+const API_BASE =
+  process.env.NEXT_PUBLIC_PUSH_SERVER_URL ||
+  (typeof window !== "undefined" && window.location.hostname !== "localhost"
+    ? "https://bathroomreminder-zij5.onrender.com"
+    : "http://localhost:4000");
+
+const VAPID_PUBLIC_KEY =
+  "BP7eA1OBdmDkLxg6-YrorPyglWaOeXqC3fNCwjyeTvcYGJYj_eMTh1qkfVFEApzl1q-dWTbF0naJh9dauCLCWXg";
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -73,7 +88,6 @@ export default function Dashboard() {
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-
   const t = translations[language];
 
   // ----------------------------
@@ -81,12 +95,29 @@ export default function Dashboard() {
   // ----------------------------
   useEffect(() => {
     const setupPush = async () => {
-      if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        console.warn("Push notifications not supported.");
+        return;
+      }
+
+      // ✅ Detect iPhone Safari — must install as PWA
+      const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const isStandalone =
+        window.matchMedia("(display-mode: standalone)").matches ||
+        (window.navigator as any).standalone === true;
+
+      if (isIOS && !isStandalone) {
+        alert(
+          "📱 To enable reminders on iPhone, please tap the Share icon → Add to Home Screen. Then open the app from your home screen."
+        );
+        return;
+      }
 
       try {
         const reg = await navigator.serviceWorker.register("/sw.js");
+        await navigator.serviceWorker.ready;
 
-        // Listen for messages from SW
+        // Listen for STOP_AUDIO from service worker
         navigator.serviceWorker.addEventListener("message", (event) => {
           if (event.data === "STOP_AUDIO" && audioRef.current) {
             audioRef.current.pause();
@@ -95,6 +126,10 @@ export default function Dashboard() {
           }
         });
 
+        if (Notification.permission !== "granted") {
+          await Notification.requestPermission();
+        }
+
         let sub = await reg.pushManager.getSubscription();
         if (!sub) {
           sub = await reg.pushManager.subscribe({
@@ -102,7 +137,7 @@ export default function Dashboard() {
             applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
           });
 
-          await fetch("http://localhost:4000/api/save-subscription", {
+          await fetch(`${API_BASE}/api/save-subscription`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ subscription: sub }),
@@ -111,13 +146,11 @@ export default function Dashboard() {
 
         setSubscription(sub);
       } catch (err) {
-        console.error("Service worker / push setup error:", err);
+        console.error("Service worker / push setup failed:", err);
       }
     };
 
     setupPush();
-
-    if (Notification.permission !== "granted") Notification.requestPermission();
 
     // Restore saved settings
     const freq = Number(localStorage.getItem("peePalFrequency") || "60");
@@ -136,8 +169,8 @@ export default function Dashboard() {
   // ----------------------------
   useEffect(() => {
     if (!isRunning) return;
-
     const freqMs = frequency * 60 * 1000;
+
     if (!lastStart) {
       const now = Date.now();
       setLastStart(now);
@@ -166,32 +199,32 @@ export default function Dashboard() {
   // ----------------------------
   const triggerPushNotification = async () => {
     try {
-      // Send push via server
-      await fetch("http://localhost:4000/api/send-push", {
+      // Send push via backend
+      await fetch(`${API_BASE}/api/send-push`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: t.message }),
       });
-  
-      // Play local audio
+
+      // ✅ Play audio (works on iOS if user has interacted before)
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.currentTime = 0;
       }
-  
       const audio = new Audio(audioFiles[language]);
       audio.loop = true;
-      await audio.play().catch((err) => console.log("Audio play error:", err));
+      await audio.play().catch(() =>
+        console.log("Audio playback deferred — user interaction required.")
+      );
       audioRef.current = audio;
-  
-      // Show local notification as fallback
+
+      // ✅ Local fallback notification
       if (Notification.permission === "granted") {
         const reg = await navigator.serviceWorker.ready;
         reg.showNotification("🚽 PeePal Reminder", {
           body: t.message,
-          icon: "/favicon.ico",
+          icon: "/icons/icon-192.png",
           requireInteraction: true,
-        //   vibrate: [200, 100, 200],
           tag: "pee-pal-reminder",
         });
       }
@@ -199,7 +232,7 @@ export default function Dashboard() {
       console.error("Push notification failed:", err);
     }
   };
-  
+
   // ----------------------------
   // CONTROLS
   // ----------------------------
@@ -234,6 +267,7 @@ export default function Dashboard() {
   };
 
   const handleTestNotification = () => triggerPushNotification();
+
   const handleChangeLanguage = (lang: "en" | "de" | "zh") => {
     setLanguage(lang);
     localStorage.setItem("peePalLang", lang);

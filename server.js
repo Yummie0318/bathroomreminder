@@ -2,7 +2,12 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const webpush = require("web-push");
 const cors = require("cors");
+const next = require("next");
 require("dotenv").config();
+
+const dev = process.env.NODE_ENV !== "production";
+const nextApp = next({ dev });
+const handle = nextApp.getRequestHandler();
 
 const app = express();
 app.use(cors());
@@ -16,16 +21,23 @@ if (!publicVapidKey || !privateVapidKey) {
   process.exit(1);
 }
 
-webpush.setVapidDetails("mailto:arnold10122017@gmail.com", publicVapidKey, privateVapidKey);
+webpush.setVapidDetails(
+  "mailto:arnold10122017@gmail.com",
+  publicVapidKey,
+  privateVapidKey
+);
 
 const subscriptions = [];
 
 // Save subscription
 app.post("/api/save-subscription", (req, res) => {
   const { subscription } = req.body;
-  if (!subscription) return res.status(400).json({ error: "No subscription provided" });
+  if (!subscription)
+    return res.status(400).json({ error: "No subscription provided" });
 
-  const exists = subscriptions.find((s) => JSON.stringify(s) === JSON.stringify(subscription));
+  const exists = subscriptions.find(
+    (s) => JSON.stringify(s) === JSON.stringify(subscription)
+  );
   if (!exists) subscriptions.push(subscription);
 
   console.log("[SERVER] Subscription saved:", subscription.endpoint);
@@ -51,7 +63,8 @@ app.post("/api/send-push", async (req, res) => {
         return { success: true };
       } catch (err) {
         console.error(`[SERVER] ❌ Push failed for #${i}`, err);
-        if (err.statusCode === 410 || err.statusCode === 404) subscriptions.splice(i, 1);
+        if (err.statusCode === 410 || err.statusCode === 404)
+          subscriptions.splice(i, 1);
         return { success: false, error: err.message };
       }
     })
@@ -60,4 +73,10 @@ app.post("/api/send-push", async (req, res) => {
   res.json({ results });
 });
 
-app.listen(4000, () => console.log("[SERVER] Push server running on http://localhost:4000"));
+// ✅ Fix: Express 5 requires regex for catch-all routes
+nextApp.prepare().then(() => {
+  app.all(/.*/, (req, res) => handle(req, res));
+
+  const PORT = process.env.PORT || 4000;
+  app.listen(PORT, () => console.log(`[SERVER] Running on port ${PORT}`));
+});
