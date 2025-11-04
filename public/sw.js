@@ -1,39 +1,36 @@
-// ✅ PeePal Service Worker (Cross-Platform Optimized)
+// ✅ PeePal Service Worker — Universal Push + Local Reminder Support
 
+// Install → activate immediately
 self.addEventListener("install", (event) => {
   self.skipWaiting();
-  console.log("[SW] Installed — skipping waiting.");
+  console.log("[SW] Installed — ready immediately");
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
-  console.log("[SW] Activated — clients claimed.");
+  console.log("[SW] Activated — controlling all clients");
 });
 
 // 🧩 Handle Push Notifications
 self.addEventListener("push", (event) => {
-  console.log("[SW] Push event received.");
+  console.log("[SW] Push event received:", event.data);
 
   let data = {};
   try {
     data = event.data ? event.data.json() : {};
-  } catch (err) {
-    console.warn("[SW] Push payload not JSON, using fallback:", err);
-    data = {
-      title: "🚽 PeePal Reminder",
-      body: event.data?.text() || "Time for a bathroom break!",
-    };
+  } catch {
+    data = { title: "🚽 PeePal Reminder", body: "Time for a bathroom break!" };
   }
 
   const title = data.title || "🚽 PeePal Reminder";
   const options = {
-    body: data.body || "Time for a bathroom break!",
+    body: data.body || "It’s time for a quick break 💧",
     icon: data.icon || "/icons/icon-192.png",
     badge: data.badge || "/icons/icon-192.png",
     tag: "pee-pal-reminder",
-    vibrate: [200, 100, 200],
     requireInteraction: true,
     renotify: true,
+    vibrate: [200, 100, 200],
     data: { url: data.url || "/dashboard" },
     actions: [
       { action: "open", title: "Open PeePal" },
@@ -41,20 +38,16 @@ self.addEventListener("push", (event) => {
     ],
   };
 
-  // ✅ Show the notification
-  event.waitUntil(
-    self.registration.showNotification(title, options).catch((err) => {
-      console.error("[SW] showNotification failed:", err);
-    })
-  );
+  event.waitUntil(self.registration.showNotification(title, options));
 });
 
 // 🧭 Handle Notification Clicks
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const targetUrl = event.notification.data?.url || "/dashboard";
 
   if (event.action === "dismiss") return;
+
+  const targetUrl = event.notification.data?.url || "/dashboard";
 
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
@@ -63,26 +56,32 @@ self.addEventListener("notificationclick", (event) => {
           return client.focus();
         }
       }
-      if (clients.openWindow) {
-        return clients.openWindow(targetUrl);
-      }
+      if (clients.openWindow) return clients.openWindow(targetUrl);
     })
   );
 });
 
-// 📴 Handle Notification Close → Stop Audio
-self.addEventListener("notificationclose", (event) => {
-  console.log("[SW] Notification closed — stopping audio...");
-  event.waitUntil(
-    clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
-      for (const client of clientList) {
-        client.postMessage("STOP_AUDIO");
-      }
-    })
-  );
+// 📴 Handle Notification Close → Stop Audio Playback
+self.addEventListener("notificationclose", async () => {
+  console.log("[SW] Notification closed — sending STOP_AUDIO");
+  const clientList = await clients.matchAll({ type: "window", includeUncontrolled: true });
+  for (const client of clientList) client.postMessage("STOP_AUDIO");
 });
 
-// 📨 Handle messages from app (for debugging/sync)
-self.addEventListener("message", (event) => {
-  console.log("[SW] Message from client:", event.data);
+// 💤 Handle Local Notifications from Dashboard
+self.addEventListener("message", async (event) => {
+  if (event.data?.type === "LOCAL_NOTIFY") {
+    const bodyMessage = event.data.body || "Stay hydrated and take a quick bathroom break 💧";
+    console.log("[SW] Local notify triggered by page:", bodyMessage);
+
+    await self.registration.showNotification("🚽 PeePal Reminder", {
+      body: bodyMessage,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      tag: "pee-pal-local",
+      requireInteraction: true,
+      renotify: true,
+      vibrate: [200, 100, 200],
+    });
+  }
 });
