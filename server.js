@@ -16,7 +16,11 @@ if (!publicVapidKey || !privateVapidKey) {
   process.exit(1);
 }
 
-webpush.setVapidDetails("mailto:arnold10122017@gmail.com", publicVapidKey, privateVapidKey);
+webpush.setVapidDetails(
+  "mailto:arnold10122017@gmail.com",
+  publicVapidKey,
+  privateVapidKey
+);
 
 const subscriptions = [];
 
@@ -60,4 +64,6 @@ app.post("/api/send-push", async (req, res) => {
   res.json({ results });
 });
 
-app.listen(4000, () => console.log("[SERVER] Push server running on http://localhost:4000"));
+// ✅ Use Render's assigned port or default to 4000 locally
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => console.log(`[SERVER] Push server running on port ${PORT}`));
