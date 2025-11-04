@@ -28,8 +28,8 @@ test('language selector changes UI text', async ({ page }) => {
 });
 
 test('change frequency and save shows toast and disables save button', async ({ page }) => {
-  // choose 30 minutes
-  await page.selectOption('select', '30');
+  // choose 30 minutes — target the select inside the main body section to avoid the header language select
+  await page.locator('section select').selectOption('30');
 
   const saveButton = page.getByRole('button', { name: /Save|Speichern|保存/ });
   await expect(saveButton).toBeEnabled();
@@ -51,7 +51,8 @@ test('Find Nearest Bathroom button is visible', async ({ page }) => {
 
 test('Start Reminders denied permission shows denied UI', async ({ page }) => {
   // Stub Notification.requestPermission to return 'denied' so we can exercise the denied UI
-  await page.addInitScript(() => {
+  // Use page.evaluate to override the method in the page context (after navigation)
+  await page.evaluate(() => {
     // @ts-ignore
     window.Notification = window.Notification || {};
     // @ts-ignore
