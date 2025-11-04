@@ -2,12 +2,12 @@
   "name": "bathroom-reminder",
   "version": "0.1.0",
   "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
-  },
+"scripts": {
+  "dev": "next dev",
+  "build": "next build",
+  "start": "next start",
+  "server": "node server.js"
+},
   "dependencies": {
     "@react-google-maps/api": "^2.20.7",
     "body-parser": "^2.2.0",
