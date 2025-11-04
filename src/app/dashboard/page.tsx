@@ -1,7 +1,16 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
-import { Droplet, Pause, Play, StopCircle, MapPin, Settings, X, Bell } from "lucide-react";
+import {
+  Droplet,
+  Pause,
+  Play,
+  StopCircle,
+  MapPin,
+  Settings,
+  X,
+  Bell,
+} from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const translations = {
@@ -20,6 +29,8 @@ const translations = {
     stop: "Stop",
     message:
       "Hi there! Just a gentle reminder — it’s time for a quick bathroom break. Stay comfortable and take care 💧",
+    enableSound: "Enable Sound",
+    soundEnabled: "Sound Enabled",
   },
   de: {
     title: "PeePal",
@@ -36,6 +47,8 @@ const translations = {
     stop: "Stopp",
     message:
       "Hallo! Nur eine kleine Erinnerung – es ist Zeit für eine kurze Toilettenpause. Bleib entspannt und pass gut auf dich auf 💧",
+    enableSound: "Ton aktivieren",
+    soundEnabled: "Ton aktiviert",
   },
   zh: {
     title: "PeePal",
@@ -50,7 +63,10 @@ const translations = {
     pause: "暂停",
     resume: "继续",
     stop: "停止",
-    message: "嗨！温馨提醒一下——该去洗手间休息一下啦。保持舒适，照顾好自己哦 💧",
+    message:
+      "嗨！温馨提醒一下——该去洗手间休息一下啦。保持舒适，照顾好自己哦 💧",
+    enableSound: "启用声音",
+    soundEnabled: "声音已启用",
   },
 };
 
@@ -84,9 +100,48 @@ export default function Dashboard() {
   const [subscription, setSubscription] = useState<PushSubscription | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
 
+  // 🔊 sound priming + playback state
+  const [soundReady, setSoundReady] = useState(false);
+  const pendingPlayRef = useRef(false);
+
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const t = translations[language];
+
+  // ----------------------------
+  // Priming audio (must be called from a user gesture)
+  // ----------------------------
+  const primeAudio = async () => {
+    try {
+      let a = audioRef.current;
+      if (!a) {
+        a = new Audio(ringtone);
+        a.loop = true;
+        // unlock by playing muted once in response to a gesture
+        a.muted = true;
+        await a.play();
+        a.pause();
+        a.muted = false;
+        audioRef.current = a;
+      }
+      setSoundReady(true);
+    } catch (e) {
+      console.log("Audio prime failed", e);
+    }
+  };
+
+  // If a PLAY_AUDIO was requested while we were hidden or blocked, retry when visible
+  useEffect(() => {
+    const onVisibility = () => {
+      if (!document.hidden && pendingPlayRef.current && audioRef.current) {
+        pendingPlayRef.current = false;
+        audioRef.current.currentTime = 0;
+        audioRef.current.play().catch(() => {});
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
 
   // ----------------------------
   // ENABLE NOTIFICATIONS
@@ -106,28 +161,6 @@ export default function Dashboard() {
     try {
       const reg = await navigator.serviceWorker.register("/sw.js");
       await navigator.serviceWorker.ready;
-
-      // Listen for messages from SW (PLAY_AUDIO / STOP_AUDIO)
-      navigator.serviceWorker.addEventListener("message", (event) => {
-        if (!event.data?.type) return;
-
-        if (event.data.type === "STOP_AUDIO" && audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current.currentTime = 0;
-          audioRef.current = null;
-        }
-
-        if (event.data.type === "PLAY_AUDIO") {
-          if (audioRef.current) {
-            audioRef.current.pause();
-            audioRef.current.currentTime = 0;
-          }
-          const audio = new Audio(ringtone);
-          audio.loop = true;
-          audio.play().catch(() => console.log("Audio blocked — user interaction required"));
-          audioRef.current = audio;
-        }
-      });
 
       // Subscribe to push
       let sub = await reg.pushManager.getSubscription();
@@ -153,6 +186,71 @@ export default function Dashboard() {
     }
   };
 
+  // Listen to SW messages (PLAY_AUDIO / STOP_AUDIO). Do this once.
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+
+    let unregistered = false;
+
+    const attach = async () => {
+      try {
+        // Ensure SW is registered so LOCAL_NOTIFY works even before enabling push
+        await navigator.serviceWorker.register("/sw.js");
+        await navigator.serviceWorker.ready;
+
+        const onMessage = (event: MessageEvent) => {
+          const type = (event.data && event.data.type) || null;
+          if (!type) return;
+
+          if (type === "STOP_AUDIO" && audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = 0;
+            return;
+          }
+
+          if (type === "PLAY_AUDIO") {
+            // Prefer primed element
+            if (!audioRef.current && soundReady) {
+              audioRef.current = new Audio(ringtone);
+              audioRef.current.loop = true;
+            }
+
+            if (audioRef.current) {
+              audioRef.current.currentTime = 0;
+              audioRef.current
+                .play()
+                .catch(() => {
+                  // blocked or background; try again on visibility
+                  pendingPlayRef.current = true;
+                });
+            } else {
+              // not primed yet; try when visible or when user primes
+              pendingPlayRef.current = true;
+            }
+          }
+        };
+
+        navigator.serviceWorker.addEventListener("message", onMessage);
+
+        // clean up
+        return () => {
+          if (unregistered) return;
+          navigator.serviceWorker.removeEventListener("message", onMessage);
+        };
+      } catch (e) {
+        console.log("[SW] attach failed", e);
+      }
+    };
+
+    const cleanupPromise = attach();
+    return () => {
+      (async () => {
+        unregistered = true;
+        await cleanupPromise;
+      })();
+    };
+  }, [soundReady]);
+
   // ----------------------------
   // RESTORE SETTINGS
   // ----------------------------
@@ -160,7 +258,11 @@ export default function Dashboard() {
     const freq = Number(localStorage.getItem("peePalFrequency") || "60");
     const storedStart = localStorage.getItem("peePalLastStart");
     const storedRunning = localStorage.getItem("peePalIsRunning") === "true";
-    const storedLang = localStorage.getItem("peePalLang") as "en" | "de" | "zh" | null;
+    const storedLang = localStorage.getItem("peePalLang") as
+      | "en"
+      | "de"
+      | "zh"
+      | null;
 
     setFrequency(freq);
     setIsRunning(storedRunning);
@@ -220,7 +322,7 @@ export default function Dashboard() {
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
-      audioRef.current = null;
+      // keep the ref so primed element remains available
     }
     setRemaining(frequency * 60);
   };
@@ -251,200 +353,210 @@ export default function Dashboard() {
     });
   };
 
-
-
   // ----------------------------
   // RENDER
   // ----------------------------
- return (
-  <main className="min-h-screen flex items-center justify-center bg-gradient-to-b from-sky-100 via-white to-sky-50 px-4 py-6 relative">
-    <div className="w-full max-w-md bg-white rounded-3xl shadow-lg border border-sky-100 flex flex-col overflow-hidden relative">
-      {/* SETTINGS BUTTON */}
-      <button
-        onClick={() => setShowSettings(true)}
-        className="absolute top-4 right-4 bg-white/80 hover:bg-white rounded-full p-2 shadow-md border border-sky-200 transition"
-      >
-        <Settings className="w-5 h-5 text-sky-600" />
-      </button>
-
-      {/* HEADER */}
-      <header className="bg-gradient-to-r from-sky-500 to-sky-600 text-white py-6 px-6 flex flex-col items-center justify-center text-center">
-        <Droplet className="w-10 h-10 mb-2" />
-        <h1 className="text-2xl font-bold tracking-tight">{t.title}</h1>
-        <p className="text-xs opacity-90 font-light">{t.subtitle}</p>
-      </header>
-
-      {/* TIMER */}
-      <section className="flex-1 flex flex-col items-center justify-center gap-6 py-10">
-        <motion.div
-          className="relative flex items-center justify-center w-40 h-40 rounded-full bg-sky-100 border-8 border-sky-200"
-          animate={{ scale: isRunning ? [1, 1.05, 1] : 1 }}
-          transition={{ duration: 2, repeat: Infinity }}
-        >
-          <span className="text-4xl font-bold text-sky-700">
-            {formatTime(remaining || frequency * 60)}
-          </span>
-        </motion.div>
-        <p className="text-gray-500 text-sm">
-          {t.nextReminder}{" "}
-          <span className="font-semibold text-sky-600">
-            {formatTime(remaining || frequency * 60)}
-          </span>
-        </p>
-      </section>
-
-      {/* CONTROLS */}
-      <section className="px-6 pb-6 flex flex-col gap-3">
-        <AnimatePresence mode="wait">
-          {isRunning ? (
-            <motion.button
-              key="pause"
-              onClick={handlePause}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white py-3 font-semibold shadow active:scale-95 transition"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-            >
-              <Pause className="w-5 h-5" /> {t.pause}
-            </motion.button>
-          ) : (
-            <motion.button
-              key="resume"
-              onClick={handleResume}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white py-3 font-semibold shadow active:scale-95 transition"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-            >
-              <Play className="w-5 h-5" /> {t.resume}
-            </motion.button>
-          )}
-        </AnimatePresence>
-
+  return (
+    <main className="min-h-screen flex items-center justify-center bg-gradient-to-b from-sky-100 via-white to-sky-50 px-4 py-6 relative">
+      <div className="w-full max-w-md bg-white rounded-3xl shadow-lg border border-sky-100 flex flex-col overflow-hidden relative">
+        {/* SETTINGS BUTTON */}
         <button
-          onClick={handleStop}
-          className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-rose-500 hover:bg-rose-600 text-white py-3 font-semibold shadow active:scale-95 transition"
+          onClick={() => setShowSettings(true)}
+          className="absolute top-4 right-4 bg-white/80 hover:bg-white rounded-full p-2 shadow-md border border-sky-200 transition"
         >
-          <StopCircle className="w-5 h-5" /> {t.stop}
+          <Settings className="w-5 h-5 text-sky-600" />
         </button>
 
-        <button
-          onClick={() => sendLocalReminder()}
-          className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-white py-3 font-semibold shadow active:scale-95 transition"
-        >
-          <Bell className="w-5 h-5" /> Send Local Reminder
-        </button>
+        {/* HEADER */}
+        <header className="bg-gradient-to-r from-sky-500 to-sky-600 text-white py-6 px-6 flex flex-col items-center justify-center text-center">
+          <Droplet className="w-10 h-10 mb-2" />
+          <h1 className="text-2xl font-bold tracking-tight">{t.title}</h1>
+          <p className="text-xs opacity-90 font-light">{t.subtitle}</p>
+        </header>
 
-        <button
-          onClick={() => (window.location.href = "/map")}
-          className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-sky-600 text-sky-700 py-3 font-semibold hover:bg-sky-50 active:scale-95 transition"
-        >
-          <MapPin className="w-5 h-5" /> {t.findBathroom}
-        </button>
-      </section>
-
-      <footer className="text-center py-3 text-[11px] text-gray-400 border-t border-gray-100">
-        Built with 💧 PeePal • Fully Responsive
-      </footer>
-    </div>
-
-    {/* SETTINGS MODAL */}
-    <AnimatePresence>
-      {showSettings && (
-        <motion.div
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-        >
+        {/* TIMER */}
+        <section className="flex-1 flex flex-col items-center justify-center gap-6 py-10">
           <motion.div
-            className="bg-white w-80 rounded-2xl shadow-lg p-6 relative border border-sky-100"
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.9, opacity: 0 }}
-            transition={{ type: "spring", duration: 0.4 }}
+            className="relative flex items-center justify-center w-40 h-40 rounded-full bg-sky-100 border-8 border-sky-200"
+            animate={{ scale: isRunning ? [1, 1.05, 1] : 1 }}
+            transition={{ duration: 2, repeat: Infinity }}
           >
-            <button
-              onClick={() => setShowSettings(false)}
-              className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <h2 className="text-lg font-semibold text-sky-700 mb-4 flex items-center gap-2">
-              <Settings className="w-5 h-5" /> {t.settings}
-            </h2>
-
-            {/* Language Dropdown */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-600 mb-1">
-                Language
-              </label>
-              <select
-                value={language}
-                onChange={(e) =>
-                  handleChangeLanguage(e.target.value as "en" | "de" | "zh")
-                }
-                className="w-full border border-gray-300 rounded-md p-2 text-sm"
-              >
-                <option value="en">English</option>
-                <option value="de">Deutsch</option>
-                <option value="zh">中文</option>
-              </select>
-            </div>
-
-            {/* Frequency Slider */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-600 mb-2">
-                {t.reminderFrequency}
-              </label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  min="5"
-                  max="120"
-                  step="5"
-                  value={frequency}
-                  onChange={(e) => {
-                    const newFreq = Number(e.target.value);
-                    setFrequency(newFreq);
-                    localStorage.setItem("peePalFrequency", String(newFreq));
-                  }}
-                  className="w-full accent-sky-500"
-                />
-                <motion.span
-                  key={frequency}
-                  className="w-12 text-right text-sm font-semibold text-sky-600"
-                  initial={{ scale: 0.8, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  {frequency}m
-                </motion.span>
-              </div>
-              <p className="text-xs text-gray-400 mt-1">{t.frequencyNote}</p>
-            </div>
-
-            {/* Test Notification */}
-            <button
-              onClick={handleTestNotification}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-sky-100 hover:bg-sky-200 text-sky-700 py-2 mb-4 font-semibold shadow-sm active:scale-95 transition"
-            >
-              <Bell className="w-4 h-4" /> {t.testNotification}
-            </button>
-
-            {/* Done */}
-            <button
-              onClick={() => setShowSettings(false)}
-              className="w-full rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold py-2 shadow active:scale-95 transition"
-            >
-              {t.done}
-            </button>
+            <span className="text-4xl font-bold text-sky-700">
+              {formatTime(remaining || frequency * 60)}
+            </span>
           </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  </main>
-);
+          <p className="text-gray-500 text-sm">
+            {t.nextReminder}{" "}
+            <span className="font-semibold text-sky-600">
+              {formatTime(remaining || frequency * 60)}
+            </span>
+          </p>
+        </section>
 
+        {/* CONTROLS */}
+        <section className="px-6 pb-6 flex flex-col gap-3">
+          {/* 🔊 Enable Sound (audio priming) */}
+          <button
+            onClick={primeAudio}
+            disabled={soundReady}
+            className={`w-full inline-flex items-center justify-center gap-2 rounded-xl ${
+              soundReady
+                ? "bg-violet-400 cursor-default"
+                : "bg-violet-500 hover:bg-violet-600"
+            } text-white py-3 font-semibold shadow active:scale-95 transition`}
+          >
+            {soundReady ? "🔊 " + t.soundEnabled : "🔊 " + t.enableSound}
+          </button>
+
+          <AnimatePresence mode="wait">
+            {isRunning ? (
+              <motion.button
+                key="pause"
+                onClick={handlePause}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white py-3 font-semibold shadow active:scale-95 transition"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+              >
+                <Pause className="w-5 h-5" /> {t.pause}
+              </motion.button>
+            ) : (
+              <motion.button
+                key="resume"
+                onClick={handleResume}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white py-3 font-semibold shadow active:scale-95 transition"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+              >
+                <Play className="w-5 h-5" /> {t.resume}
+              </motion.button>
+            )}
+          </AnimatePresence>
+
+          <button
+            onClick={handleStop}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-rose-500 hover:bg-rose-600 text-white py-3 font-semibold shadow active:scale-95 transition"
+          >
+            <StopCircle className="w-5 h-5" /> {t.stop}
+          </button>
+
+          <button
+            onClick={() => sendLocalReminder()}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-white py-3 font-semibold shadow active:scale-95 transition"
+          >
+            <Bell className="w-5 h-5" /> Send Local Reminder
+          </button>
+
+          <button
+            onClick={() => (window.location.href = "/map")}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-sky-600 text-sky-700 py-3 font-semibold hover:bg-sky-50 active:scale-95 transition"
+          >
+            <MapPin className="w-5 h-5" /> {t.findBathroom}
+          </button>
+        </section>
+
+        <footer className="text-center py-3 text-[11px] text-gray-400 border-t border-gray-100">
+          Built with 💧 PeePal • Fully Responsive
+        </footer>
+      </div>
+
+      {/* SETTINGS MODAL */}
+      <AnimatePresence>
+        {showSettings && (
+          <motion.div
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="bg-white w-80 rounded-2xl shadow-lg p-6 relative border border-sky-100"
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              transition={{ type: "spring", duration: 0.4 }}
+            >
+              <button
+                onClick={() => setShowSettings(false)}
+                className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <h2 className="text-lg font-semibold text-sky-700 mb-4 flex items-center gap-2">
+                <Settings className="w-5 h-5" /> {t.settings}
+              </h2>
+
+              {/* Language Dropdown */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-600 mb-1">
+                  Language
+                </label>
+                <select
+                  value={language}
+                  onChange={(e) =>
+                    handleChangeLanguage(e.target.value as "en" | "de" | "zh")
+                  }
+                  className="w-full border border-gray-300 rounded-md p-2 text-sm"
+                >
+                  <option value="en">English</option>
+                  <option value="de">Deutsch</option>
+                  <option value="zh">中文</option>
+                </select>
+              </div>
+
+              {/* Frequency Slider */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-600 mb-2">
+                  {t.reminderFrequency}
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="5"
+                    max="120"
+                    step="5"
+                    value={frequency}
+                    onChange={(e) => {
+                      const newFreq = Number(e.target.value);
+                      setFrequency(newFreq);
+                      localStorage.setItem("peePalFrequency", String(newFreq));
+                    }}
+                    className="w-full accent-sky-500"
+                  />
+                  <motion.span
+                    key={frequency}
+                    className="w-12 text-right text-sm font-semibold text-sky-600"
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    {frequency}m
+                  </motion.span>
+                </div>
+                <p className="text-xs text-gray-400 mt-1">{t.frequencyNote}</p>
+              </div>
+
+              {/* Test Notification */}
+              <button
+                onClick={handleTestNotification}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-sky-100 hover:bg-sky-200 text-sky-700 py-2 mb-4 font-semibold shadow-sm active:scale-95 transition"
+              >
+                <Bell className="w-4 h-4" /> {t.testNotification}
+              </button>
+
+              {/* Done */}
+              <button
+                onClick={() => setShowSettings(false)}
+                className="w-full rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold py-2 shadow active:scale-95 transition"
+              >
+                {t.done}
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </main>
+  );
 }

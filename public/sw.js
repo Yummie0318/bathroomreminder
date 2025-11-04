@@ -36,6 +36,8 @@ self.addEventListener("push", (event) => {
       { action: "open", title: "Open PeePal" },
       { action: "dismiss", title: "Dismiss" },
     ],
+    // 👇 Prevents accidental silent notifications in browsers that honor it
+    silent: false,
   };
 
   // Show the notification and notify clients to play audio
@@ -43,8 +45,13 @@ self.addEventListener("push", (event) => {
     (async () => {
       await self.registration.showNotification(title, options);
 
-      const clientList = await clients.matchAll({ type: "window", includeUncontrolled: true });
-      clientList.forEach((client) => client.postMessage({ type: "PLAY_AUDIO" }));
+      const clientList = await clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      clientList.forEach((client) =>
+        client.postMessage({ type: "PLAY_AUDIO" })
+      );
     })()
   );
 });
@@ -58,26 +65,37 @@ self.addEventListener("notificationclick", (event) => {
   const targetUrl = event.notification.data?.url || "/dashboard";
 
   event.waitUntil(
-    clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
-      for (const client of clientList) {
-        if (client.url.includes(targetUrl) && "focus" in client) return client.focus();
-      }
-      if (clients.openWindow) return clients.openWindow(targetUrl);
-    })
+    clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clientList) => {
+        for (const client of clientList) {
+          if (client.url.includes(targetUrl) && "focus" in client) {
+            return client.focus();
+          }
+        }
+        if (clients.openWindow) return clients.openWindow(targetUrl);
+      })
   );
 });
 
 // 📴 Handle Notification Close → Stop Audio Playback
 self.addEventListener("notificationclose", async () => {
   console.log("[SW] Notification closed — sending STOP_AUDIO");
-  const clientList = await clients.matchAll({ type: "window", includeUncontrolled: true });
-  clientList.forEach((client) => client.postMessage({ type: "STOP_AUDIO" }));
+  const clientList = await clients.matchAll({
+    type: "window",
+    includeUncontrolled: true,
+  });
+  clientList.forEach((client) =>
+    client.postMessage({ type: "STOP_AUDIO" })
+  );
 });
 
 // 💤 Handle Local Notifications from Dashboard
 self.addEventListener("message", async (event) => {
   if (event.data?.type === "LOCAL_NOTIFY") {
-    const bodyMessage = event.data.body || "Stay hydrated and take a quick bathroom break 💧";
+    const bodyMessage =
+      event.data.body ||
+      "Stay hydrated and take a quick bathroom break 💧";
     const url = event.data.url || "/dashboard";
 
     console.log("[SW] Local notify triggered by page:", bodyMessage);
@@ -91,9 +109,15 @@ self.addEventListener("message", async (event) => {
       renotify: true,
       vibrate: [200, 100, 200],
       data: { url },
+      silent: false, // 👈 also here
     });
 
-    const clientList = await clients.matchAll({ type: "window", includeUncontrolled: true });
-    clientList.forEach((client) => client.postMessage({ type: "PLAY_AUDIO" }));
+    const clientList = await clients.matchAll({
+      type: "window",
+      includeUncontrolled: true,
+    });
+    clientList.forEach((client) =>
+      client.postMessage({ type: "PLAY_AUDIO" })
+    );
   }
 });
