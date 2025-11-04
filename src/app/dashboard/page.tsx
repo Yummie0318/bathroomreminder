@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useRef, useMemo } from "react";
-import { Droplet, Pause, Play, StopCircle, MapPin, Settings, X, Bell } from "lucide-react";
+import { Droplet, Pause, Play, StopCircle, MapPin, Settings, X, Bell, Info } from "lucide-react";
 import { motion, AnimatePresence, useMotionValue, useSpring, useTransform } from "framer-motion";
 import type { MotionValue } from "framer-motion";
 
@@ -20,7 +20,10 @@ const translations = {
     frequencyNote: "How often you want to be reminded 💧",
     pause: "Pause",
     resume: "Resume",
-    stop: "Stop",
+    stop: "Stop & Reset",
+    stopExplain: "Stops the timer, silences sound, and resets the countdown to a full interval. Use Resume to start again.",
+    enableNotifs: "Enable Notifications",
+    notifsEnabled: "Notifications Enabled",
     message:
       "Hi there! Just a gentle reminder — it’s time for a quick bathroom break. Stay comfortable and take care 💧",
     enableSound: "Enable Sound",
@@ -31,6 +34,7 @@ const translations = {
       "Tap “Enable Sound” once to let PeePal play a tone when you return to the app after a reminder.",
     language: "Language",
     built: "Built with 💧 PeePal • Fully Responsive",
+    stoppedBanner: "Reminders stopped and timer reset. Tap Resume to start a fresh interval.",
   },
   de: {
     title: "PeePal",
@@ -45,7 +49,10 @@ const translations = {
     frequencyNote: "Wie oft Sie erinnert werden möchten 💧",
     pause: "Pause",
     resume: "Fortsetzen",
-    stop: "Stopp",
+    stop: "Stopp & Zurücksetzen",
+    stopExplain: "Stoppt den Timer, schaltet den Ton stumm und setzt den Countdown auf ein volles Intervall zurück. Mit „Fortsetzen“ neu starten.",
+    enableNotifs: "Benachrichtigungen aktivieren",
+    notifsEnabled: "Benachrichtigungen aktiviert",
     message:
       "Hallo! Nur eine kleine Erinnerung – es ist Zeit für eine kurze Toilettenpause. Bleib entspannt und pass gut auf dich auf 💧",
     enableSound: "Ton aktivieren",
@@ -56,6 +63,7 @@ const translations = {
       "Tippe einmal auf „Ton aktivieren“, damit PeePal beim Zurückkehren einen Ton abspielen kann.",
     language: "Sprache",
     built: "Erstellt mit 💧 PeePal • Vollständig responsiv",
+    stoppedBanner: "Erinnerungen gestoppt und Timer zurückgesetzt. Tippe auf „Fortsetzen“, um neu zu starten.",
   },
   zh: {
     title: "PeePal",
@@ -70,7 +78,10 @@ const translations = {
     frequencyNote: "您希望多久提醒一次 💧",
     pause: "暂停",
     resume: "继续",
-    stop: "停止",
+    stop: "停止并重置",
+    stopExplain: "停止计时、静音并将倒计时重置为完整间隔。点击“继续”重新开始。",
+    enableNotifs: "启用通知",
+    notifsEnabled: "通知已启用",
     message: "嗨！温馨提醒一下——该去洗手间休息一下啦。保持舒适，照顾好自己哦 💧",
     enableSound: "启用声音",
     soundEnabled: "声音已启用",
@@ -80,6 +91,7 @@ const translations = {
       "请先点一次“启用声音”，这样返回应用时 PeePal 才能播放提示音。",
     language: "语言",
     built: "由 💧 PeePal 构建 • 完全响应式设计",
+    stoppedBanner: "已停止提醒并重置计时。点击“继续”重新开始一个新的间隔。",
   },
 } as const;
 
@@ -102,6 +114,23 @@ function urlBase64ToUint8Array(base64String: string) {
   const rawData = atob(base64);
   return new Uint8Array([...rawData].map((c) => c.charCodeAt(0)));
 }
+
+/* -------------- Server sync helper -------------- */
+const postPreferences = async (sub: PushSubscription, freq: number, lang: Lang) => {
+  try {
+    await fetch(`${API_BASE}/api/set-preferences`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        endpoint: sub.endpoint,
+        frequencyMinutes: freq,
+        language: lang,
+      }),
+    });
+  } catch (e) {
+    console.warn("[Prefs] failed to sync", e);
+  }
+};
 
 /* -------------------- WEB AUDIO RINGTONE -------------------- */
 function useWebAudioRingtone() {
@@ -227,6 +256,7 @@ export default function Dashboard() {
   const [language, setLanguage] = useState<Lang>("en");
   const [subscription, setSubscription] = useState<PushSubscription | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [justStopped, setJustStopped] = useState(false);
 
   const [iosHintsDismissed, setIosHintsDismissed] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
@@ -245,6 +275,7 @@ export default function Dashboard() {
     setIsStandalone(Boolean(standalone));
   }, []);
 
+  /* -------- Notifications enable + SW/VAPID hookup -------- */
   const handleEnableNotifications = async () => {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
       alert("Push not supported.");
@@ -258,6 +289,7 @@ export default function Dashboard() {
     try {
       const reg = await navigator.serviceWorker.register("/sw.js");
       await navigator.serviceWorker.ready;
+
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
         sub = await reg.pushManager.subscribe({
@@ -270,8 +302,19 @@ export default function Dashboard() {
           body: JSON.stringify({ subscription: sub }),
         });
       }
+
       setSubscription(sub);
       setNotificationsEnabled(true);
+
+      // Pass VAPID to SW so it can resubscribe later even with all tabs closed
+      reg.active?.postMessage({
+        type: "SET_VAPID",
+        vapidKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+
+      // Initial server sync
+      await postPreferences(sub, frequency, language);
+
       alert("✅ Notifications enabled!");
     } catch (err) {
       console.error("SW/Push error:", err);
@@ -279,6 +322,7 @@ export default function Dashboard() {
     }
   };
 
+  /* -------- Attach SW message listener (audio + SUB_UPDATED) -------- */
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     let onMessage: any;
@@ -296,6 +340,10 @@ export default function Dashboard() {
               return;
             }
             play().catch(() => (pendingPlayRef.current = true));
+          } else if (type === "SUB_UPDATED" && event.data?.subscription) {
+            const newSub = event.data.subscription as PushSubscription;
+            setSubscription(newSub);
+            postPreferences(newSub, frequency, language);
           }
         };
         navigator.serviceWorker.addEventListener("message", onMessage);
@@ -307,8 +355,9 @@ export default function Dashboard() {
     return () => {
       if (onMessage) navigator.serviceWorker.removeEventListener("message", onMessage);
     };
-  }, [ready, play, stop, pendingPlayRef]);
+  }, [ready, play, stop, pendingPlayRef, frequency, language]);
 
+  /* -------- Restore persisted state -------- */
   useEffect(() => {
     const freq = Number(localStorage.getItem("peePalFrequency") || "60");
     const storedStart = localStorage.getItem("peePalLastStart");
@@ -320,6 +369,7 @@ export default function Dashboard() {
     setLanguage(storedLang);
   }, []);
 
+  /* -------- Timer engine -------- */
   useEffect(() => {
     if (!isRunning) return;
     const freqMs = frequency * 60 * 1000;
@@ -343,21 +393,36 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, [isRunning, lastStart, frequency]);
 
+  /* -------- Controls -------- */
   const handlePause = () => {
     setIsRunning(false);
     localStorage.setItem("peePalIsRunning", "false");
     stop();
   };
   const handleResume = () => {
+    setJustStopped(false);
     setIsRunning(true);
     localStorage.setItem("peePalIsRunning", "true");
     const now = Date.now();
     setLastStart(now);
     localStorage.setItem("peePalLastStart", String(now));
   };
+
+  // Clear timer & reset with an explanation
   const handleStop = () => {
-    stop();
+    const ok = window.confirm(
+      `${tDict.stop}\n\n${tDict.stopExplain}`
+    );
+    if (!ok) return;
+    stop(); // stop audio immediately
+    setIsRunning(false);
+    localStorage.setItem("peePalIsRunning", "false");
+
+    // Reset countdown back to a full interval and clear lastStart
+    setLastStart(null);
+    localStorage.removeItem("peePalLastStart");
     setRemaining(frequency * 60);
+    setJustStopped(true);
   };
 
   const formatTime = (seconds: number) => {
@@ -370,6 +435,8 @@ export default function Dashboard() {
   const handleChangeLanguage = (lang: Lang) => {
     setLanguage(lang);
     localStorage.setItem("peePalLang", lang);
+    // Immediately reflect on server if we have a subscription
+    if (subscription) postPreferences(subscription, frequency, lang);
   };
   const cycleLanguage = () => {
     const order: Lang[] = ["en", "de", "zh"];
@@ -383,6 +450,12 @@ export default function Dashboard() {
     sw.active?.postMessage({ type: "LOCAL_NOTIFY", body: message || tDict.message });
   };
 
+  // Keep server prefs in sync on change
+  useEffect(() => {
+    if (subscription) postPreferences(subscription, frequency, language);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subscription, frequency, language]);
+
   /* --------- water progress (smoothed) --------- */
   const total = frequency * 60;
   const secsNum = remaining || total;
@@ -393,7 +466,7 @@ export default function Dashboard() {
     progressMV.set(rawProgress);
   }, [rawProgress, progressMV]);
 
-  // level & height (MotionValues used directly — no casts)
+  // level & height
   const waterY: MotionValue<number> = useTransform(progressSpring, (p: number) => 100 - p * 92 - 4);
   const waterHeight: MotionValue<number> = useTransform(progressSpring, (p: number) => p * 92 + 4);
 
@@ -402,7 +475,7 @@ export default function Dashboard() {
   const sloshAmp: MotionValue<number> = useTransform(progressSpring, (p: number) => (isRunning ? 1.8 + p * 1.2 : 0));
   const sloshAngle: MotionValue<number> = useTransform([tick, sloshAmp], ([tt, aa]) => Math.sin((tt as number) / 900) * (aa as number));
 
-  // subtle shimmer (used for highlight)
+  // subtle shimmer
   const shimmer: MotionValue<number> = useTransform(tick, (tt) => (Math.sin(tt / 1200) + 1) / 2);
   const highlightOpacity = useTransform(shimmer, (s) => 0.75 - s * 0.15);
 
@@ -429,13 +502,14 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Card height now responsive (clamp) */}
+      {/* Card */}
       <div className="w-full max-w-md bg-white rounded-3xl shadow-lg border border-sky-100 grid grid-rows-[auto_1fr_auto_auto] overflow-hidden relative h-[min(92dvh,42rem)]">
-        {/* Settings button only (back button removed) */}
+        {/* Settings */}
         <button
           onClick={() => setShowSettings(true)}
           className="absolute top-3 sm:top-4 right-3 sm:right-4 bg-white/80 hover:bg-white rounded-full p-2 shadow-md border border-sky-200 transition"
           aria-label={tDict.settings}
+          title={tDict.settings}
         >
           <Settings className="w-5 h-5 text-sky-600" />
         </button>
@@ -446,8 +520,8 @@ export default function Dashboard() {
           <p className="text-[11px] sm:text-xs opacity-90 font-light">{tDict.subtitle}</p>
         </header>
 
-        {/* TIMER — responsive circle with clamp() */}
-        <section className="min-h-0 flex flex-col items-center justify-center gap-4 sm:gap-6 py-6 sm:py-8 px-4">
+        {/* TIMER */}
+        <section className="min-h-0 flex flex-col items-center justify-center gap-3 sm:gap-5 py-5 sm:py-7 px-4">
           <motion.div
             className="relative flex items-center justify-center rounded-full border-8 border-sky-200 shadow-inner bg-sky-50 overflow-hidden"
             style={{
@@ -481,31 +555,31 @@ export default function Dashboard() {
                   <stop offset="100%" stopColor="#0b79c9" />
                 </linearGradient>
 
-                {/* Caustics moving light pattern */}
+                {/* Caustics */}
                 <filter id="caustics" x="-20%" y="-20%" width="140%" height="140%">
                   <feTurbulence type="fractalNoise" baseFrequency="0.01 0.015" numOctaves="2" seed="9" result="noise" />
                   <feColorMatrix type="saturate" values="0.6" />
                   <feDisplacementMap in="SourceGraphic" in2="noise" scale="0.8" xChannelSelector="R" yChannelSelector="G" />
                 </filter>
 
-                {/* Subtle waves refraction */}
+                {/* Refraction */}
                 <filter id="refract" x="-20%" y="-20%" width="140%" height="140%">
                   <feTurbulence type="fractalNoise" baseFrequency="0.006 0.02" numOctaves="3" seed="4" result="n2" />
                   <feDisplacementMap in="SourceGraphic" in2="n2" scale="1.2" xChannelSelector="R" yChannelSelector="G" />
                 </filter>
 
-                {/* Soft blur for foam */}
+                {/* Soft blur */}
                 <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
                   <feGaussianBlur stdDeviation="0.6" />
                 </filter>
 
-                {/* Foam gradient (white to transparent) */}
+                {/* Foam gradient */}
                 <linearGradient id="foam" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="rgba(255,255,255,0.85)" />
                   <stop offset="100%" stopColor="rgba(255,255,255,0.0)" />
                 </linearGradient>
 
-                {/* Sparkle highlight */}
+                {/* Sparkle */}
                 <radialGradient id="spark" cx="35%" cy="15%" r="30%">
                   <stop offset="0%" stopColor="rgba(255,255,255,0.9)" />
                   <stop offset="60%" stopColor="rgba(255,255,255,0.25)" />
@@ -515,7 +589,6 @@ export default function Dashboard() {
 
               {/* Water group with level + slosh */}
               <motion.g clipPath="url(#clip-circle)" style={{ transformOrigin: "50% 50%", rotate: sloshAngle }}>
-                {/* Main water body with depth, caustics & refraction */}
                 <motion.rect
                   x="4"
                   width="92"
@@ -525,19 +598,11 @@ export default function Dashboard() {
                   fill="url(#depth)"
                   filter="url(#caustics) url(#refract)"
                 />
-
-                {/* Parallax wave layers (different phase/speed) */}
                 <Wave y={waterY} amp={5.8} speed={6.5} color="#14a5e6" opacity={0.45} dir="left" density={5} />
                 <Wave y={waterY} amp={3.6} speed={3.8} color="#47c7ff" opacity={0.6} dir="right" density={6} />
                 <Wave y={waterY} amp={2.2} speed={2.2} color="url(#foam)" opacity={0.9} dir="left" density={7} blur />
-
-                {/* Foam crest stroke at surface */}
                 <FoamCrest y={waterY} amp={2.6} speed={2.0} opacity={0.55} />
-
-                {/* Rising bubbles */}
                 <Bubbles y={waterY} count={10} />
-
-                {/* Specular sparkle that shifts with shimmer */}
                 <motion.circle
                   cx={useTransform(shimmer, (s) => 38 + s * 8)}
                   cy={useTransform(shimmer, (s) => 30 + s * 6)}
@@ -557,10 +622,26 @@ export default function Dashboard() {
           <p className="text-gray-500 text-xs sm:text-sm">
             {tDict.nextReminder} <span className="font-semibold text-sky-600">{formatTime(secsNum)}</span>
           </p>
+
+          {justStopped && (
+            <div className="flex items-start gap-2 text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 text-xs max-w-sm">
+              <Info className="w-4 h-4 mt-0.5" />
+              <span>{tDict.stoppedBanner}</span>
+            </div>
+          )}
         </section>
 
         {/* CONTROLS */}
         <section className="px-4 sm:px-6 pb-4 sm:pb-6 flex flex-col gap-2.5 sm:gap-3">
+          {!notificationsEnabled && (
+            <button
+              onClick={handleEnableNotifications}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white py-2.5 sm:py-3 font-semibold shadow active:scale-95 transition"
+            >
+              🔔 {tDict.enableNotifs}
+            </button>
+          )}
+
           <button
             onClick={prime}
             disabled={ready}
@@ -580,6 +661,7 @@ export default function Dashboard() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
+                title={translations[language].pause}
               >
                 <Pause className="w-5 h-5" /> {tDict.pause}
               </motion.button>
@@ -591,6 +673,7 @@ export default function Dashboard() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
+                title={translations[language].resume}
               >
                 <Play className="w-5 h-5" /> {tDict.resume}
               </motion.button>
@@ -601,6 +684,7 @@ export default function Dashboard() {
             <button
               onClick={handleStop}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-rose-500 hover:bg-rose-600 text-white py-2.5 sm:py-3 font-semibold shadow active:scale-95 transition"
+              title={tDict.stopExplain}
             >
               <StopCircle className="w-5 h-5" /> {tDict.stop}
             </button>
@@ -623,7 +707,6 @@ export default function Dashboard() {
         <footer className="text-center py-2.5 sm:py-3 text-[10px] sm:text-[11px] text-gray-400 border-t border-gray-100">
           {tDict.built}
         </footer>
-
       </div>
 
       {/* SETTINGS MODAL */}
@@ -692,6 +775,7 @@ export default function Dashboard() {
                       const newFreq = Number(e.target.value);
                       setFrequency(newFreq);
                       localStorage.setItem("peePalFrequency", String(newFreq));
+                      // server sync handled by effect
                     }}
                     className="w-full accent-sky-500"
                   />
@@ -751,7 +835,7 @@ function Wave({
   opacity?: number;
   dir?: "left" | "right";
   blur?: boolean;
-  density?: number; // more points => smoother curve
+  density?: number;
 }) {
   const t = useTicker();
   const phase = useTransform(t, (tt) => (tt / (dir === "left" ? 1400 : 1600)) % (Math.PI * 2));
@@ -789,15 +873,13 @@ function FoamCrest({ y, amp, speed, opacity = 0.6 }: { y: MotionValue<number>; a
 }
 
 function Bubbles({ y, count = 10 }: { y: MotionValue<number>; count?: number }) {
-  // Mirror the MotionValue<number> -> plain number for animate
   const [surf, setSurf] = useState<number>(80);
   useEffect(() => {
     const unsub = y.on("change", (v) => setSurf(v));
-    setSurf(y.get()); // initialize
+    setSurf(y.get());
     return () => unsub?.();
   }, [y]);
 
-  // Precompute bubble seeds (stable)
   const seeds = useMemo(
     () =>
       Array.from({ length: count }, (_, i) => ({
@@ -821,10 +903,9 @@ function Bubbles({ y, count = 10 }: { y: MotionValue<number>; count?: number }) 
           fill="white"
           fillOpacity={0.85}
           style={{ mixBlendMode: "screen" as any, filter: "url(#soft)" as any }}
-          // Use plain numbers in animate, not MotionValues
           animate={{
-            cy: [100, surf - 1], // rise to ~just under the surface
-            opacity: [0, 0.9, 0], // fade in/out
+            cy: [100, surf - 1],
+            opacity: [0, 0.9, 0],
             scale: [0.9, 1, 1.05],
           }}
           transition={{
@@ -850,7 +931,6 @@ function wavePath(x: number, y: number, w: number, a: number, density: number, p
   for (let i = -steps; i <= steps; i++) {
     const px = x + i * dx;
     const py = y + Math.sin((i / steps) * Math.PI * 2 + phase) * a * (i % 2 === 0 ? 1 : 0.85);
-    // cubic curve handles (soften with small offset)
     const cx1 = px + dx * 0.3;
     const cy1 = py - a * 0.2;
     const cx2 = px + dx * 0.7;

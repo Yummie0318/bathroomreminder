@@ -1,5 +1,8 @@
 // ✅ PeePal Service Worker — Universal Push + Local Reminder Support
 
+// VAPID key (Uint8Array) will be provided by the page so the SW can resubscribe headlessly
+self.PEEPAL_VAPID_KEY = null;
+
 // Install → activate immediately
 self.addEventListener("install", (event) => {
   self.skipWaiting();
@@ -11,87 +14,95 @@ self.addEventListener("activate", (event) => {
   console.log("[SW] Activated — controlling all clients");
 });
 
-// 🧩 Handle Push Notifications
+// 🧩 Handle Push Notifications (works even when all tabs are closed)
 self.addEventListener("push", (event) => {
-  console.log("[SW] Push event received:", event.data);
+  event.waitUntil((async () => {
+    console.log("[SW] Push event received");
 
-  let data = {};
-  try {
-    data = event.data ? event.data.json() : {};
-  } catch {
-    data = { title: "🚽 PeePal Reminder", body: "Time for a bathroom break!" };
-  }
+    // Parse payload safely (supports JSON; tolerates text/empty)
+    let data = {};
+    try {
+      if (event.data) {
+        try {
+          data = event.data.json();
+        } catch {
+          // Some backends send plain text; optional:
+          // const txt = await event.data.text();
+          data = {};
+        }
+      }
+    } catch {
+      data = {};
+    }
 
-  const title = data.title || "🚽 PeePal Reminder";
-  const options = {
-    body: data.body || "It’s time for a quick break 💧",
-    icon: data.icon || "/icons/icon-192.png",
-    badge: data.badge || "/icons/icon-192.png",
-    tag: "pee-pal-reminder",
-    requireInteraction: true,
-    renotify: true,
-    vibrate: [200, 100, 200],
-    data: { url: data.url || "/dashboard" },
-    actions: [
-      { action: "open", title: "Open PeePal" },
-      { action: "dismiss", title: "Dismiss" },
-    ],
-    // 👇 Prevents accidental silent notifications in browsers that honor it
-    silent: false,
-  };
+    const title = data.title || "🚽 PeePal Reminder";
+    const options = {
+      body: data.body || "It’s time for a quick break 💧",
+      icon: data.icon || "/icons/icon-192.png",
+      badge: data.badge || "/icons/icon-192.png",
+      tag: "pee-pal-reminder",
+      requireInteraction: true,
+      renotify: true,
+      vibrate: [200, 100, 200],
+      data: { url: data.url || "/dashboard" },
+      actions: [
+        { action: "open", title: "Open PeePal" },
+        { action: "dismiss", title: "Dismiss" },
+      ],
+      silent: false,
+    };
 
-  // Show the notification and notify clients to play audio
-  event.waitUntil(
-    (async () => {
-      await self.registration.showNotification(title, options);
+    await self.registration.showNotification(title, options);
 
-      const clientList = await clients.matchAll({
-        type: "window",
-        includeUncontrolled: true,
-      });
-      clientList.forEach((client) =>
-        client.postMessage({ type: "PLAY_AUDIO" })
-      );
-    })()
-  );
+    // Nudge any open clients to play audio
+    try {
+      const clientList = await clients.matchAll({ type: "window", includeUncontrolled: true });
+      clientList.forEach((client) => client.postMessage({ type: "PLAY_AUDIO" }));
+    } catch (e) {
+      // no-op
+    }
+  })());
 });
 
-// 🧭 Handle Notification Clicks
+// 🧭 Handle Notification Clicks (open correct URL from a cold start)
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-
   if (event.action === "dismiss") return;
 
-  const targetUrl = event.notification.data?.url || "/dashboard";
+  // Resolve relative URL against SW scope so it opens correctly with no tabs
+  const scope = self.registration.scope || "/";
+  const targetUrl = new URL(event.notification.data?.url || "/dashboard", scope).href;
 
-  event.waitUntil(
-    clients
-      .matchAll({ type: "window", includeUncontrolled: true })
-      .then((clientList) => {
-        for (const client of clientList) {
-          if (client.url.includes(targetUrl) && "focus" in client) {
-            return client.focus();
-          }
+  event.waitUntil((async () => {
+    const clientList = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of clientList) {
+      try {
+        if (client.url && client.url.indexOf(targetUrl) !== -1 && "focus" in client) {
+          return client.focus();
         }
-        if (clients.openWindow) return clients.openWindow(targetUrl);
-      })
-  );
+      } catch {}
+    }
+    if (clients.openWindow) return clients.openWindow(targetUrl);
+  })());
 });
 
 // 📴 Handle Notification Close → Stop Audio Playback
-self.addEventListener("notificationclose", async () => {
-  console.log("[SW] Notification closed — sending STOP_AUDIO");
-  const clientList = await clients.matchAll({
-    type: "window",
-    includeUncontrolled: true,
-  });
-  clientList.forEach((client) =>
-    client.postMessage({ type: "STOP_AUDIO" })
-  );
+self.addEventListener("notificationclose", (event) => {
+  event.waitUntil((async () => {
+    console.log("[SW] Notification closed — sending STOP_AUDIO");
+    const clientList = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    clientList.forEach((client) => client.postMessage({ type: "STOP_AUDIO" }));
+  })());
 });
 
-// 💤 Handle Local Notifications from Dashboard
+// 💤 Messages from the page (LOCAL_NOTIFY & setting VAPID)
 self.addEventListener("message", async (event) => {
+  // Page provides VAPID so we can resubscribe if the browser rotates the subscription
+  if (event.data?.type === "SET_VAPID") {
+    self.PEEPAL_VAPID_KEY = event.data.vapidKey || null; // Uint8Array expected
+    return;
+  }
+
   if (event.data?.type === "LOCAL_NOTIFY") {
     const bodyMessage =
       event.data.body ||
@@ -109,7 +120,7 @@ self.addEventListener("message", async (event) => {
       renotify: true,
       vibrate: [200, 100, 200],
       data: { url },
-      silent: false, // 👈 also here
+      silent: false,
     });
 
     const clientList = await clients.matchAll({
@@ -120,4 +131,31 @@ self.addEventListener("message", async (event) => {
       client.postMessage({ type: "PLAY_AUDIO" })
     );
   }
+});
+
+// 🔁 Auto-resubscribe if the browser rotates the push subscription
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil((async () => {
+    try {
+      const newSub = await self.registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: self.PEEPAL_VAPID_KEY || undefined,
+      });
+
+      // Tell any open client to update server; or POST directly if no clients
+      const list = await clients.matchAll({ type: "window", includeUncontrolled: true });
+      if (list.length) {
+        list.forEach((c) => c.postMessage({ type: "SUB_UPDATED", subscription: newSub }));
+      } else {
+        await fetch("/api/save-subscription", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subscription: newSub }),
+        });
+      }
+      console.log("[SW] pushsubscriptionchange → resubscribed");
+    } catch (e) {
+      console.warn("[SW] pushsubscriptionchange failed", e);
+    }
+  })());
 });

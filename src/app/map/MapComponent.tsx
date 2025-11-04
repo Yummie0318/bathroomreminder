@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   MapContainer,
   TileLayer,
+  Circle, // true-meter accuracy halo
   CircleMarker,
   Popup,
   useMap,
@@ -57,7 +58,6 @@ function formatDistance(m: number, lang: Lang) {
     if (m < 1000) return `${Math.round(m)} 米`;
     return `${(m / 1000).toFixed(1)} 公里`;
   }
-  // en + de share m/km formatting
   if (m < 1000) return `${Math.round(m)} m`;
   return `${(m / 1000).toFixed(1)} km`;
 }
@@ -85,57 +85,64 @@ function FitBounds({
   padding?: [number, number];
 }) {
   const map = useMap();
+
+  // Ensure Leaflet recalculates size when mounted (avoids partial render)
   useEffect(() => {
-    const bounds: LatLngTuple[] = [
-      [userLocation.lat, userLocation.lng],
-      ...points,
-    ];
+    const id = setTimeout(() => map.invalidateSize(), 0);
+    return () => clearTimeout(id);
+  }, [map]);
+
+  useEffect(() => {
+    const bounds: LatLngTuple[] = [[userLocation.lat, userLocation.lng], ...points];
+
     if (bounds.length > 1) {
       map.fitBounds(bounds, { padding });
       const id = setTimeout(() => map.invalidateSize(), 200);
       return () => clearTimeout(id);
     } else {
+      // No suggestions yet: keep a reasonable zoom around the *actual* GPS fix
       map.setView([userLocation.lat, userLocation.lng], 16);
     }
   }, [points, userLocation, map, padding]);
+
   return null;
 }
 
-/** Open Google Maps directions from current location to dest */
-function navigateFromCurrentLocation(lat: number, lon: number, name?: string) {
-  const dest = encodeURIComponent(name ?? `${lat},${lon}`);
-  const url = `https://www.google.com/maps/dir/?api=1&origin=Current+Location&destination=${lat},${lon}&destination_place_id=${dest}&travelmode=walking`;
+/** Open Google Maps directions from current location to dest (no fake place_id) */
+function navigateFromCurrentLocation(lat: number, lon: number) {
+  const url = `https://www.google.com/maps/dir/?api=1&origin=Current+Location&destination=${lat},${lon}&travelmode=walking`;
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
 export default function MapComponent({
   userLocation,
   suggestions,
+  accuracy = null, // meters; draw halo if provided
 }: {
   userLocation: LatLng;
   suggestions: Suggestion[];
+  accuracy?: number | null;
 }) {
   const mapRef = useRef<LeafletMap | null>(null);
 
   /* read language from localStorage to match dashboard */
   const [lang, setLang] = useState<Lang>("en");
   const t = copy[lang];
+
   useEffect(() => {
-    const saved = (localStorage.getItem("peePalLang") as Lang | null) || "en";
+    const saved =
+      (typeof window !== "undefined"
+        ? (localStorage.getItem("peePalLang") as Lang | null)
+        : null) || "en";
     setLang(saved);
   }, []);
 
   const pointsWithDistance = useMemo(
     () =>
-      suggestions
+      (suggestions ?? [])
         .map((s) => ({
           ...s,
-          distance: getDistance(
-            userLocation.lat,
-            userLocation.lng,
-            s.lat,
-            s.lon
-          ),
+          distance: getDistance(userLocation.lat, userLocation.lng, s.lat, s.lon),
         }))
         .sort((a, b) => a.distance - b.distance),
     [suggestions, userLocation]
@@ -166,12 +173,18 @@ export default function MapComponent({
         <FitBounds
           points={boundsPoints}
           userLocation={userLocation}
-          padding={
-            typeof window !== "undefined" && window.innerWidth < 768
-              ? [18, 18]
-              : [32, 32]
-          }
+          padding={typeof window !== "undefined" && window.innerWidth < 768 ? [18, 18] : [32, 32]}
         />
+
+        {/* Accuracy ring (true meters) */}
+        {typeof accuracy === "number" && accuracy > 0 && (
+          <Circle
+            center={[userLocation.lat, userLocation.lng]}
+            radius={accuracy}
+            pathOptions={{ color: "#38bdf8", fillColor: "#38bdf8" }}
+            fillOpacity={0.08}
+          />
+        )}
 
         {/* User location marker */}
         <CircleMarker
@@ -185,8 +198,7 @@ export default function MapComponent({
               <div className="font-semibold text-sky-700">{t.youHere}</div>
               <div className="mt-1 text-xs text-gray-600">
                 <span className="inline-flex items-center gap-1">
-                  <MapPin className="w-3.5 h-3.5" /> {userLocation.lat.toFixed(5)},{" "}
-                  {userLocation.lng.toFixed(5)}
+                  <MapPin className="w-3.5 h-3.5" /> {userLocation.lat.toFixed(5)}, {userLocation.lng.toFixed(5)}
                 </span>
               </div>
             </div>
@@ -196,10 +208,14 @@ export default function MapComponent({
         {/* Suggestions */}
         {pointsWithDistance.map((p, idx) => {
           const isNearest =
-            nearest && p.name === nearest.name && p.lat === nearest.lat && p.lon === nearest.lon;
+            !!nearest &&
+            p.name === nearest.name &&
+            p.lat === nearest.lat &&
+            p.lon === nearest.lon;
+
           return (
             <CircleMarker
-              key={`${p.name}-${idx}`}
+              key={`${p.name}-${p.lat},${p.lon}-${idx}`}
               center={[p.lat, p.lon]}
               radius={isNearest ? 11 : 7}
               pathOptions={{
@@ -209,7 +225,7 @@ export default function MapComponent({
               fillOpacity={0.95}
             >
               <Popup>
-                <div className="min-w-[200px]">
+                <div className="min-w-[220px]">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="font-semibold text-sky-900">{p.name}</div>
@@ -225,12 +241,10 @@ export default function MapComponent({
                     {formatDistance(p.distance, lang)} {t.away}
                   </div>
                   {p.tips && (
-                    <div className="mt-2 text-[12px] text-gray-600 leading-relaxed">
-                      {p.tips}
-                    </div>
+                    <div className="mt-2 text-[12px] text-gray-600 leading-relaxed">{p.tips}</div>
                   )}
                   <button
-                    onClick={() => navigateFromCurrentLocation(p.lat, p.lon, p.name)}
+                    onClick={() => navigateFromCurrentLocation(p.lat, p.lon)}
                     className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-xs font-semibold text-white hover:bg-sky-700 active:scale-[0.98] transition"
                   >
                     <Navigation className="h-4 w-4" />
@@ -249,7 +263,7 @@ export default function MapComponent({
           type="button"
           onClick={() => {
             if (!nearest) return;
-            navigateFromCurrentLocation(nearest.lat, nearest.lon, nearest.name);
+            navigateFromCurrentLocation(nearest.lat, nearest.lon);
           }}
           disabled={!nearest}
           className="pointer-events-auto w-full max-w-md inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 font-semibold shadow-lg border

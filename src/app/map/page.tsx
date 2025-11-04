@@ -143,6 +143,7 @@ export default function MapPage() {
   const t = copy[lang];
 
   const [userLocation, setUserLocation] = useState<LatLng | null>(null);
+  const [accuracy, setAccuracy] = useState<number | null>(null); // NEW: accuracy ring
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -165,6 +166,7 @@ export default function MapPage() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setAccuracy(pos.coords.accuracy ?? null); // capture accuracy
         setErrorMsg(null);
         setGeoLoading(false);
         gotFirstFix.current = true;
@@ -191,61 +193,27 @@ export default function MapPage() {
       setLoading(true);
       try {
         const res = await fetch(
-          `/api/suggest_restrooms?lat=${userLocation.lat}&lon=${userLocation.lng}&radius=${DEFAULT_RADIUS}&lang=${lang}`
+          `/api/suggest_restrooms?lat=${userLocation.lat}&lon=${userLocation.lng}&radius=${DEFAULT_RADIUS}&lang=${lang}`,
+          { cache: "no-store" }
         );
-        const data = await res.json();
 
-        if (data?.suggestions?.length) {
-          const normalized: Suggestion[] = data.suggestions.map((s: any) => ({
-            name: s.name,
-            type: s.type ?? "place",
-            lat: Number(s.lat),
-            lon: Number(s.lon),
-            tips: s.tips,
-          }));
-          setSuggestions(normalized);
-        } else {
-          // Local demo fallback + localized tips; types also localized via badge renderer
-          setSuggestions([
-            {
-              name: "SM City Tuguegarao",
-              type: "shopping mall",
-              lat: userLocation.lat + 0.002,
-              lon: userLocation.lng + 0.003,
-              tips:
-                lang === "de"
-                  ? "Saubere öffentliche Toiletten – in der Haupthalle oder im Food-Court."
-                  : lang === "zh"
-                  ? "干净的公共洗手间——在中庭或美食广场附近。"
-                  : "Clean public restrooms—look near the main atrium or food court.",
-            },
-            {
-              name: "Vita Bella – Caritan Highway",
-              type: "coffee shop",
-              lat: userLocation.lat + 0.0015,
-              lon: userLocation.lng + 0.0025,
-              tips:
-                lang === "de"
-                  ? "Freundlich fragen, ob Sie die Toilette benutzen dürfen."
-                  : lang === "zh"
-                  ? "礼貌询问店员可否使用洗手间。"
-                  : "Kindly ask staff to use the restroom.",
-            },
-            {
-              name: "Starbucks SM City Tuguegarao",
-              type: "coffee shop",
-              lat: userLocation.lat + 0.0022,
-              lon: userLocation.lng + 0.0028,
-              tips:
-                lang === "de"
-                  ? "Gute Alternative, wenn es im Einkaufszentrum voll ist."
-                  : lang === "zh"
-                  ? "如果商场洗手间拥挤，这是不错的备选。"
-                  : "Good alternative if the mall restrooms are crowded.",
-            },
-          ]);
+        if (!res.ok) {
+          console.warn("suggest_restrooms failed:", res.status, await res.text());
+          setSuggestions([]); // no dummy fallback
+          return;
         }
-      } catch {
+
+        const data = await res.json();
+        const normalized: Suggestion[] = (data?.suggestions ?? []).map((s: any) => ({
+          name: s.name,
+          type: s.type ?? "place",
+          lat: Number(s.lat),
+          lon: Number(s.lon),
+          tips: s.tips,
+        }));
+        setSuggestions(normalized);
+      } catch (e) {
+        console.warn("suggest_restrooms error:", e);
         setSuggestions([]);
       } finally {
         setLoading(false);
@@ -264,11 +232,11 @@ export default function MapPage() {
       .sort((a, b) => a.distance - b.distance);
   }, [userLocation, suggestions]);
 
-  /* ---------- HEADER ---------- */
+  /* ---------- HEADER (no overlap, mobile-friendly) ---------- */
   const Header = (
     <header className="sticky top-0 z-40">
       <div className="mx-auto max-w-5xl px-3 pt-[max(env(safe-area-inset-top),0.75rem)]">
-        <div className="relative flex items-center justify-between rounded-2xl border border-sky-100/60 bg-white/80 backdrop-blur-md shadow-sm px-2 py-2">
+        <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-2xl border border-sky-100/60 bg-white/80 backdrop-blur-md shadow-sm px-2 py-2">
           {/* Left: Back */}
           <div className="flex items-center">
             <button
@@ -282,17 +250,20 @@ export default function MapPage() {
             </button>
           </div>
 
-          {/* Center: Title */}
-          <div className="absolute left-1/2 -translate-x-1/2 pointer-events-none text-center">
-            <div className="inline-flex items-center gap-2">
-              <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-sky-500 text-white shadow">
+          {/* Center: Title (no absolute; allow wrap on DE, clamp on XS) */}
+          <div className="min-w-0 flex justify-center">
+            <div className="inline-flex items-center gap-2 min-w-0">
+              <div className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-sky-500 text-white shadow flex-none">
                 <MapPin className="h-4 w-4" />
               </div>
-              <div className="text-left">
-                <h1 className="text-base sm:text-lg font-bold leading-tight text-sky-900">
+              <div className="text-left min-w-0">
+                <h1
+                  className="text-base sm:text-lg font-bold leading-tight text-sky-900 truncate sm:whitespace-normal sm:truncate-none"
+                  style={{ wordBreak: "keep-all" }}
+                >
                   {t.title}
                 </h1>
-                <p className="text-[11px] sm:text-xs text-sky-700/70 -mt-0.5">
+                <p className="text-[11px] sm:text-xs text-sky-700/70 mt-0.5 line-clamp-1 sm:line-clamp-none">
                   {userLocation ? t.usingLocation : errorMsg ? t.locationRequired : t.detecting}
                 </p>
               </div>
@@ -300,7 +271,7 @@ export default function MapPage() {
           </div>
 
           {/* Right: Refresh */}
-          <div className="flex items-center">
+          <div className="flex items-center justify-end">
             <button
               onClick={getLocation}
               className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-sky-200 bg-white hover:bg-sky-50 active:scale-[0.98] text-sky-800"
@@ -370,6 +341,7 @@ export default function MapPage() {
             <MapComponent
               userLocation={userLocation}
               suggestions={withDistance.map(({ distance, ...s }) => s)}
+              accuracy={accuracy} // NEW: draw blue halo
             />
           ) : (
             <div className="absolute inset-0 flex items-center justify-center">
@@ -405,9 +377,17 @@ export default function MapPage() {
             {/* Loading skeletons */}
             <AnimatePresence>
               {loading && (
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-3">
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="space-y-3"
+                >
                   {Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="rounded-2xl border border-sky-100 p-4 bg-gradient-to-br from-white to-sky-50">
+                    <div
+                      key={i}
+                      className="rounded-2xl border border-sky-100 p-4 bg-gradient-to-br from-white to-sky-50"
+                    >
                       <div className="h-4 w-3/5 rounded bg-sky-100 animate-pulse" />
                       <div className="mt-2 h-3 w-2/5 rounded bg-sky-100 animate-pulse" />
                       <div className="mt-3 h-3 w-4/5 rounded bg-sky-100 animate-pulse" />
@@ -435,9 +415,9 @@ export default function MapPage() {
                     className="group mb-3 rounded-2xl border border-sky-100 bg-white p-4 hover:shadow-md hover:border-sky-200 transition"
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div>
+                      <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <h3 className="font-semibold text-sky-900">{s.name}</h3>
+                          <h3 className="font-semibold text-sky-900 truncate">{s.name}</h3>
                           {s.type && (
                             <span className="rounded-full border border-sky-200 bg-sky-50 text-sky-700 text-[10px] px-2 py-0.5 font-semibold">
                               {localizeType(s.type, lang)}
@@ -452,7 +432,7 @@ export default function MapPage() {
                         )}
                       </div>
 
-                      <div className="flex flex-col gap-2 items-end">
+                      <div className="flex flex-col gap-2 items-end shrink-0">
                         <button
                           onClick={() => openInMaps(s.lat, s.lon, s.name)}
                           className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-3 py-2 text-xs font-semibold text-white hover:bg-sky-700 active:scale-95 transition"
