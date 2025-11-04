@@ -1,12 +1,11 @@
 "use client";
 
-import React, { useMemo, useState, useEffect, } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
   Droplet,
   Bell,
   MapPin,
   Info,
-  Check,
   AlertTriangle,
   Globe,
   ChevronDown,
@@ -36,6 +35,8 @@ const translations = {
     toastDenied: "Reminders won’t work unless you enable notifications.",
     toastInfo: "Please allow notifications to receive reminders.",
     toastGranted: "Notifications enabled! Redirecting to dashboard…",
+    toastInstall:
+      "To enable reminders on iPhone, tap ‘Share → Add to Home Screen’ and open PeePal from there.",
     built: "Built with 💧 PeePal • Fully Responsive",
     waterHint: "Higher interval → fuller tank",
     every: "Every",
@@ -54,15 +55,20 @@ const translations = {
     start: "Erinnerungen starten",
     find: "Nächstes Badezimmer finden",
     deniedTitle: "Benachrichtigungen deaktiviert",
-    deniedMsg: "Bitte aktiviere Benachrichtigungen, um Erinnerungen zu erhalten.",
+    deniedMsg:
+      "Bitte aktiviere Benachrichtigungen, um Erinnerungen zu erhalten.",
     private: "Privat · Keine Daten gespeichert",
     toastSaved: (n: number) =>
       `Erinnerung alle ${
         n === 0.25 ? "15 Sekunden (Test)" : `${n} Minuten`
       } eingestellt`,
-    toastDenied: "Erinnerungen funktionieren nur mit aktivierten Benachrichtigungen.",
-    toastInfo: "Bitte erlaube Benachrichtigungen, um Erinnerungen zu erhalten.",
+    toastDenied:
+      "Erinnerungen funktionieren nur mit aktivierten Benachrichtigungen.",
+    toastInfo:
+      "Bitte erlaube Benachrichtigungen, um Erinnerungen zu erhalten.",
     toastGranted: "Benachrichtigungen aktiviert! Weiterleitung zum Dashboard…",
+    toastInstall:
+      "Um Erinnerungen auf dem iPhone zu aktivieren, tippe auf ‘Teilen → Zum Home-Bildschirm hinzufügen’.",
     built: "Erstellt mit 💧 PeePal • Vollständig responsiv",
     waterHint: "Längeres Intervall → vollerer Tank",
     every: "Alle",
@@ -89,6 +95,7 @@ const translations = {
     toastDenied: "提醒功能需要启用通知权限。",
     toastInfo: "请允许通知以接收提醒。",
     toastGranted: "通知已启用！正在跳转到仪表板…",
+    toastInstall: "要在 iPhone 上启用提醒，请点击“分享 → 添加到主屏幕”。",
     built: "由 💧 PeePal 构建 • 完全响应式设计",
     waterHint: "间隔越长 → 水箱越满",
     every: "每",
@@ -103,15 +110,13 @@ export default function PeePalCard() {
   const [savedFrequency, setSavedFrequency] = useState(60);
   const [saving, setSaving] = useState(false);
   const [denied, setDenied] = useState(false);
-  const [toast, setToast] = useState<{
-    type: "success" | "error" | "info";
-    message: string;
-  } | null>(null);
+  const [toast, setToast] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
   const [language, setLanguage] = useState<"en" | "de" | "zh">("en");
 
   const t = translations[language];
   const isDirty = useMemo(() => frequency !== savedFrequency, [frequency, savedFrequency]);
 
+  /* ---------------------- LOAD SETTINGS ---------------------- */
   useEffect(() => {
     const storedFreq = localStorage.getItem("peePalFrequency");
     const storedPerm = localStorage.getItem("peePalNotificationPermission");
@@ -128,8 +133,17 @@ export default function PeePalCard() {
 
     if (storedPerm === "granted") window.location.href = "/dashboard";
     else if (storedPerm === "denied") setDenied(true);
+
+    // ✅ Register service worker
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker
+        .register("/sw.js")
+        .then(() => console.log("[SW] Registered successfully"))
+        .catch((err) => console.error("[SW] Registration failed:", err));
+    }
   }, []);
 
+  /* ---------------------- SAVE FREQUENCY ---------------------- */
   const handleSave = async () => {
     setSaving(true);
     setTimeout(() => {
@@ -141,9 +155,23 @@ export default function PeePalCard() {
     }, 500);
   };
 
+  /* ---------------------- START REMINDERS ---------------------- */
   const handleStart = async () => {
+    // Detect if app is installed as a PWA (required for iOS notifications)
+    const isInstalledPWA =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (window.navigator as any).standalone === true;
+
+    // iOS: not installed yet
+    if (!isInstalledPWA && /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+      setToast({ type: "info", message: t.toastInstall });
+      return;
+    }
+
+    // Request permission
     const permission = await Notification.requestPermission();
     localStorage.setItem("peePalNotificationPermission", permission);
+
     if (permission === "granted") {
       setToast({ type: "success", message: t.toastGranted });
       setTimeout(() => (window.location.href = "/dashboard"), 1500);
@@ -158,14 +186,13 @@ export default function PeePalCard() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-sky-100 via-white to-sky-50 flex items-center justify-center px-4 py-6">
       <div className="w-full max-w-md h-full md:h-auto rounded-3xl shadow-xl bg-white/80 backdrop-blur-xl border border-sky-100 flex flex-col overflow-hidden relative">
-        
         {/* HEADER */}
         <header className="relative bg-gradient-to-r from-sky-500 to-sky-600 text-white px-6 pt-8 pb-6 text-center">
           <div className="absolute inset-0 opacity-20 pointer-events-none">
             <WaveDecoration />
           </div>
-  
-       {/* 🌍 LANGUAGE SELECTOR */}
+
+          {/* 🌍 LANGUAGE SELECTOR */}
           <div className="absolute top-3 right-4 z-20">
             <motion.div
               whileHover={{ scale: 1.05 }}
@@ -189,7 +216,6 @@ export default function PeePalCard() {
             </motion.div>
           </div>
 
-  
           <motion.div
             initial={{ y: -6, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -206,11 +232,11 @@ export default function PeePalCard() {
             </div>
           </motion.div>
         </header>
-  
+
         {/* BODY */}
         <section className="flex-1 px-6 py-6 space-y-6 overflow-y-auto">
           <p className="text-gray-600 text-sm text-center">{t.description}</p>
-  
+
           {/* Frequency */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -223,12 +249,12 @@ export default function PeePalCard() {
                 className="flex-1 rounded-xl border border-gray-200 px-4 py-3 text-sm focus:ring-2 focus:ring-sky-400"
               >
                 {[0.25, 15, 30, 45, 60, 90, 120].map((m) => (
-                <option key={m} value={m}>
-                {t.every} {m === 0.25 ? `15 ${t.seconds}` : `${m} ${t.minutes}`}
-              </option>              
+                  <option key={m} value={m}>
+                    {t.every} {m === 0.25 ? `15 ${t.seconds}` : `${m} ${t.minutes}`}
+                  </option>
                 ))}
               </select>
-  
+
               <button
                 onClick={handleSave}
                 disabled={!isDirty || saving}
@@ -241,7 +267,7 @@ export default function PeePalCard() {
               <Info className="w-3 h-3" /> {t.changeNote}
             </p>
           </div>
-  
+
           {/* Buttons */}
           <div className="flex flex-col gap-3">
             <button
@@ -256,7 +282,7 @@ export default function PeePalCard() {
               <MapPin className="w-5 h-5" /> {t.find}
             </button>
           </div>
-  
+
           {denied && (
             <div className="mt-2 rounded-xl border-l-4 border-amber-400 bg-amber-50 p-3 text-sm text-amber-900">
               <p className="font-semibold mb-1 flex items-center gap-1.5">
@@ -266,18 +292,17 @@ export default function PeePalCard() {
             </div>
           )}
         </section>
-  
-        {/* 💧 WATERLINE MOVED TO FOOTER */}
+
         <div className="px-6 pb-4">
-        <Waterline frequency={frequency} t={t} />
+          <Waterline frequency={frequency} t={t} />
         </div>
-  
+
         <footer className="text-center py-3 text-xs text-gray-400 border-t border-gray-100">
           {t.built}
         </footer>
       </div>
-  
-      {/* Toast Notification */}
+
+      {/* Toast */}
       <div className="pointer-events-none fixed inset-x-0 top-4 flex justify-center px-4 z-50">
         <AnimatePresence>
           {toast && (
@@ -300,17 +325,10 @@ export default function PeePalCard() {
       </div>
     </main>
   );
-  
 }
 
-/* ---------------------- WATER LINE ---------------------- */
-function Waterline({
-  frequency = 60,
-  t,
-}: {
-  frequency?: number;
-  t: any;
-}) {
+/* ---------------------- WATERLINE ---------------------- */
+function Waterline({ frequency = 60, t }: { frequency?: number; t: any }) {
   const waterLevels: Record<number, number> = {
     30: 30,
     45: 45,
@@ -359,9 +377,7 @@ function Waterline({
       </motion.div>
 
       <div className="absolute inset-0 flex items-end justify-center pb-1">
-        <div className="text-[11px] text-gray-500 select-none">
-          {t.waterHint}
-        </div>
+        <div className="text-[11px] text-gray-500 select-none">{t.waterHint}</div>
       </div>
     </div>
   );
