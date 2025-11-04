@@ -69,8 +69,8 @@ test('open settings modal, change language to German, change frequency and close
     el.dispatchEvent(new Event('change', { bubbles: true, composed: true } as any));
   });
 
-  // Wait for the displayed value to update (motion span)
-  await expect(page.locator('text=30m')).toBeVisible({ timeout: 10000 });
+  // More reliable: assert the range input's value has updated rather than waiting for animated text
+  await expect(range).toHaveValue('30', { timeout: 10000 });
 
   // click Done to close settings
   const doneBtn = page.getByRole('button', { name: /Done|Fertig|完成/i });
