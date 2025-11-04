@@ -54,11 +54,8 @@ const translations = {
   },
 };
 
-const audioFiles = {
-  en: "/english.mp3",
-  de: "/german.mp3",
-  zh: "/Chinese.mp3",
-};
+// Single ringtone for all notifications
+const ringtone = "/ringtone.mp3";
 
 // API & VAPID
 const API_BASE =
@@ -185,19 +182,19 @@ export default function Dashboard() {
     }, 1000);
 
     return () => clearInterval(intervalRef.current!);
-  }, [isRunning, lastStart, frequency, language, subscription]);
+  }, [isRunning, lastStart, frequency, subscription]);
 
   // ----------------------------
   // TRIGGER NOTIFICATION + AUDIO
   // ----------------------------
   const triggerPushNotification = async () => {
     try {
-      // Play audio
+      // Play ringtone
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.currentTime = 0;
       }
-      const audio = new Audio(audioFiles[language]);
+      const audio = new Audio(ringtone);
       audio.loop = true;
       await audio.play().catch(() => {
         console.log("Audio playback deferred — user interaction required.");
@@ -214,7 +211,7 @@ export default function Dashboard() {
           tag: "pee-pal-reminder",
           renotify: true,
           vibrate: [200, 100, 200],
-        } as NotificationOptions); // ✅ Add this
+        } as NotificationOptions);
       }
     } catch (err) {
       console.error("Notification failed:", err);
@@ -261,8 +258,7 @@ export default function Dashboard() {
     localStorage.setItem("peePalLang", lang);
   };
 
-
-    // ----------------------------
+  // ----------------------------
   // SEND LOCAL REMINDER VIA SW
   // ----------------------------
   const sendLocalReminder = async (message?: string) => {
@@ -274,12 +270,12 @@ export default function Dashboard() {
       body: message || t.message,
     });
 
-    // Play audio locally as well
+    // Play ringtone locally
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
-    const audio = new Audio(audioFiles[language]);
+    const audio = new Audio(ringtone);
     audio.loop = true;
     await audio.play().catch(() => {
       console.log("Audio playback deferred — user interaction required.");
