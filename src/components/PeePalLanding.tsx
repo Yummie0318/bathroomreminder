@@ -11,6 +11,8 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useRouter } from "next/navigation";
+
 
 /* ---------------------- LANGUAGE TEXTS ---------------------- */
 const translations = {
@@ -29,9 +31,7 @@ const translations = {
     deniedMsg: "Please enable browser notifications to receive reminders.",
     private: "Private · No data stored",
     toastSaved: (n: number) =>
-      `Reminder set to every ${
-        n === 0.25 ? "15 seconds (test)" : `${n} minutes`
-      }`,
+      `Reminder set to every ${n === 0.25 ? "15 seconds (test)" : `${n} minutes`}`,
     toastDenied: "Reminders won’t work unless you enable notifications.",
     toastInfo: "Please allow notifications to receive reminders.",
     toastGranted: "Notifications enabled! Redirecting to dashboard…",
@@ -59,9 +59,7 @@ const translations = {
       "Bitte aktiviere Benachrichtigungen, um Erinnerungen zu erhalten.",
     private: "Privat · Keine Daten gespeichert",
     toastSaved: (n: number) =>
-      `Erinnerung alle ${
-        n === 0.25 ? "15 Sekunden (Test)" : `${n} Minuten`
-      } eingestellt`,
+      `Erinnerung alle ${n === 0.25 ? "15 Sekunden (Test)" : `${n} Minuten`} eingestellt`,
     toastDenied:
       "Erinnerungen funktionieren nur mit aktivierten Benachrichtigungen.",
     toastInfo:
@@ -89,9 +87,7 @@ const translations = {
     deniedMsg: "请启用浏览器通知以接收提醒。",
     private: "隐私保护 · 不存储任何数据",
     toastSaved: (n: number) =>
-      `提醒已设置为每 ${
-        n === 0.25 ? "15 秒（测试）" : `${n} 分钟`
-      } 一次`,
+      `提醒已设置为每 ${n === 0.25 ? "15 秒（测试）" : `${n} 分钟`} 一次`,
     toastDenied: "提醒功能需要启用通知权限。",
     toastInfo: "请允许通知以接收提醒。",
     toastGranted: "通知已启用！正在跳转到仪表板…",
@@ -102,25 +98,36 @@ const translations = {
     seconds: "秒（测试）",
     minutes: "分钟",
   },
-};
+} as const;
 
 /* ---------------------- MAIN COMPONENT ---------------------- */
 export default function PeePalCard() {
+  const router = useRouter();
   const [frequency, setFrequency] = useState(60);
   const [savedFrequency, setSavedFrequency] = useState(60);
   const [saving, setSaving] = useState(false);
   const [denied, setDenied] = useState(false);
-  const [toast, setToast] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
+  const [toast, setToast] = useState<{
+    type: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
   const [language, setLanguage] = useState<"en" | "de" | "zh">("en");
 
   const t = translations[language];
-  const isDirty = useMemo(() => frequency !== savedFrequency, [frequency, savedFrequency]);
+  const isDirty = useMemo(
+    () => frequency !== savedFrequency,
+    [frequency, savedFrequency]
+  );
 
   /* ---------------------- LOAD SETTINGS ---------------------- */
   useEffect(() => {
     const storedFreq = localStorage.getItem("peePalFrequency");
     const storedPerm = localStorage.getItem("peePalNotificationPermission");
-    const storedLang = localStorage.getItem("peePalLang") as "en" | "de" | "zh" | null;
+    const storedLang = localStorage.getItem("peePalLang") as
+      | "en"
+      | "de"
+      | "zh"
+      | null;
 
     if (storedLang) setLanguage(storedLang);
     if (storedFreq) {
@@ -134,11 +141,9 @@ export default function PeePalCard() {
     if (storedPerm === "granted") window.location.href = "/dashboard";
     else if (storedPerm === "denied") setDenied(true);
 
-    // ✅ Register service worker
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker
         .register("/sw.js")
-        .then(() => console.log("[SW] Registered successfully"))
         .catch((err) => console.error("[SW] Registration failed:", err));
     }
   }, []);
@@ -157,18 +162,15 @@ export default function PeePalCard() {
 
   /* ---------------------- START REMINDERS ---------------------- */
   const handleStart = async () => {
-    // Detect if app is installed as a PWA (required for iOS notifications)
     const isInstalledPWA =
       window.matchMedia("(display-mode: standalone)").matches ||
       (window.navigator as any).standalone === true;
 
-    // iOS: not installed yet
     if (!isInstalledPWA && /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
       setToast({ type: "info", message: t.toastInstall });
       return;
     }
 
-    // Request permission
     const permission = await Notification.requestPermission();
     localStorage.setItem("peePalNotificationPermission", permission);
 
@@ -184,20 +186,42 @@ export default function PeePalCard() {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-sky-100 via-white to-sky-50 flex items-center justify-center px-4 py-6">
-      <div className="w-full max-w-md h-full md:h-auto rounded-3xl shadow-xl bg-white/80 backdrop-blur-xl border border-sky-100 flex flex-col overflow-hidden relative">
-        {/* HEADER */}
-        <header className="relative bg-gradient-to-r from-sky-500 to-sky-600 text-white px-6 pt-8 pb-6 text-center">
+    <main
+      className="
+        h-[100dvh] w-full overflow-hidden
+        bg-gradient-to-b from-sky-100 via-white to-sky-50
+        flex items-center justify-center
+        px-3 sm:px-4 py-3 sm:py-6
+      "
+      style={{
+        paddingTop: "calc(env(safe-area-inset-top) + 0.5rem)",
+        paddingBottom: "calc(env(safe-area-inset-bottom) + 0.5rem)",
+        paddingLeft: "calc(env(safe-area-inset-left) + 0.75rem)",
+        paddingRight: "calc(env(safe-area-inset-right) + 0.75rem)",
+      }}
+    >
+      {/* CARD: compact vertical grid — no page scroll */}
+      <div
+        className="
+          w-full max-w-md
+          h-full sm:h-[min(42rem,92dvh)]
+          grid
+          grid-rows-[auto_auto_1fr_auto]
+          rounded-3xl shadow-xl
+          bg-white/85 backdrop-blur-xl
+          border border-sky-100
+          overflow-hidden
+        "
+      >
+        {/* HEADER (tighter) */}
+        <header className="relative bg-gradient-to-r from-sky-500 to-sky-600 text-white px-6 pt-6 pb-4 text-center">
           <div className="absolute inset-0 opacity-20 pointer-events-none">
             <WaveDecoration />
           </div>
 
-          {/* 🌍 LANGUAGE SELECTOR */}
-          <div className="absolute top-3 right-4 z-20">
-            <motion.div
-              whileHover={{ scale: 1.05 }}
-              className="bg-white/20 backdrop-blur-md shadow-sm rounded-full px-3 py-1.5 flex items-center gap-2 border border-white/30 transition-all duration-200"
-            >
+          {/* Language selector */}
+          <div className="absolute top-2.5 right-4 z-20">
+            <div className="bg-white/20 backdrop-blur-md rounded-full px-3 py-1 flex items-center gap-2 border border-white/30">
               <Globe className="w-4 h-4 text-white/90" />
               <select
                 value={language}
@@ -206,47 +230,48 @@ export default function PeePalCard() {
                   setLanguage(lang);
                   localStorage.setItem("peePalLang", lang);
                 }}
-                className="bg-transparent text-white text-xs md:text-sm font-medium focus:outline-none cursor-pointer appearance-none"
+                className="bg-transparent text-white text-[11px] md:text-sm font-medium focus:outline-none cursor-pointer appearance-none"
               >
                 <option className="text-black" value="en">🇬🇧 English</option>
                 <option className="text-black" value="de">🇩🇪 Deutsch</option>
                 <option className="text-black" value="zh">🇨🇳 中文</option>
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-white/80" />
-            </motion.div>
+            </div>
           </div>
 
-          <motion.div
-            initial={{ y: -6, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="relative z-10 flex flex-col items-center"
-          >
-            <div className="w-14 h-14 rounded-2xl bg-white/15 border border-white/20 flex items-center justify-center shadow-md">
-              <Droplet className="w-7 h-7" />
+          <div className="relative z-10 flex flex-col items-center">
+            <div className="w-12 h-12 rounded-2xl bg-white/15 border border-white/20 flex items-center justify-center shadow-md">
+              <Droplet className="w-6 h-6" />
             </div>
-            <h1 className="mt-3 text-2xl font-bold">{t.title}</h1>
-            <p className="mt-1 text-xs text-white/90">{t.subtitle}</p>
-            <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-[11px]">
-              <span className="inline-flex h-2 w-2 rounded-full bg-emerald-300" />
+            <h1 className="mt-2 text-xl font-bold leading-tight">{t.title}</h1>
+            <p className="mt-0.5 text-[11px] text-white/90">{t.subtitle}</p>
+            <div className="mt-2 inline-flex items-center gap-1 rounded-full bg-white/15 px-2 py-[2px] text-[10px]">
+              <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-300" />
               {t.private}
             </div>
-          </motion.div>
+          </div>
         </header>
 
-        {/* BODY */}
-        <section className="flex-1 px-6 py-6 space-y-6 overflow-y-auto">
-          <p className="text-gray-600 text-sm text-center">{t.description}</p>
+        {/* Description (small) */}
+        <div className="px-5 pt-2 text-center">
+          <p className="text-gray-600 text-[12.5px] leading-snug">
+            {t.description}
+          </p>
+        </div>
 
+        {/* BODY — **Waterline moved here** under buttons; tighter spacing */}
+        <section className="px-5 py-3 flex flex-col">
           {/* Frequency */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-gray-700">
               {t.freqLabel}
             </label>
             <div className="flex gap-2">
               <select
                 value={frequency}
                 onChange={(e) => setFrequency(Number(e.target.value))}
-                className="flex-1 rounded-xl border border-gray-200 px-4 py-3 text-sm focus:ring-2 focus:ring-sky-400"
+                className="flex-1 rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm focus:ring-2 focus:ring-sky-400"
               >
                 {[0.25, 15, 30, 45, 60, 90, 120].map((m) => (
                   <option key={m} value={m}>
@@ -258,46 +283,51 @@ export default function PeePalCard() {
               <button
                 onClick={handleSave}
                 disabled={!isDirty || saving}
-                className="rounded-xl bg-sky-50 border border-sky-300 text-sky-700 px-4 py-3 font-medium hover:bg-sky-100 disabled:opacity-50"
+                className="rounded-xl bg-sky-50 border border-sky-300 text-sky-700 px-4 py-2.5 text-sm font-medium hover:bg-sky-100 disabled:opacity-50"
               >
                 {saving ? t.saving : t.save}
               </button>
             </div>
-            <p className="mt-2 text-xs text-gray-500 flex items-center gap-1">
-              <Info className="w-3 h-3" /> {t.changeNote}
+            <p className="text-[11px] text-gray-500 flex items-center gap-1">
+              <Info className="w-3 h-3" />
+              {t.changeNote}
             </p>
           </div>
 
           {/* Buttons */}
-          <div className="flex flex-col gap-3">
+          <div className="mt-3 grid grid-cols-1 gap-2.5">
             <button
               onClick={handleStart}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white py-3.5 font-semibold"
+              className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white py-3 font-semibold active:scale-95 transition"
             >
               <Bell className="w-5 h-5" /> {t.start}
             </button>
             <button
-              className="w-full inline-flex items-center justify-center gap-2 rounded-2xl border border-sky-600 text-sky-700 py-3.5 font-semibold hover:bg-sky-50"
+              onClick={() => router.push("/map")}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-2xl border border-sky-600 text-sky-700 py-3 font-semibold hover:bg-sky-50 active:scale-95 transition"
             >
               <MapPin className="w-5 h-5" /> {t.find}
             </button>
+
           </div>
 
           {denied && (
-            <div className="mt-2 rounded-xl border-l-4 border-amber-400 bg-amber-50 p-3 text-sm text-amber-900">
+            <div className="mt-2.5 rounded-xl border-l-4 border-amber-400 bg-amber-50 p-3 text-sm text-amber-900">
               <p className="font-semibold mb-1 flex items-center gap-1.5">
                 <AlertTriangle className="w-4 h-4" /> {t.deniedTitle}
               </p>
               <p>{t.deniedMsg}</p>
             </div>
           )}
+
+          {/* Waterline now sits RIGHT under the buttons */}
+          <div className="mt-3">
+            <Waterline frequency={frequency} hint={t.waterHint} />
+          </div>
         </section>
 
-        <div className="px-6 pb-4">
-          <Waterline frequency={frequency} t={t} />
-        </div>
-
-        <footer className="text-center py-3 text-xs text-gray-400 border-t border-gray-100">
+        {/* FOOTER (tighter) */}
+        <footer className="text-center py-2.5 text-[11px] text-gray-400 border-t border-gray-100">
           {t.built}
         </footer>
       </div>
@@ -328,7 +358,14 @@ export default function PeePalCard() {
 }
 
 /* ---------------------- WATERLINE ---------------------- */
-function Waterline({ frequency = 60, t }: { frequency?: number; t: any }) {
+function Waterline({
+  frequency = 60,
+  hint,
+}: {
+  frequency?: number;
+  hint: string;
+}) {
+  // map frequency to height (px of the 84–92px tank)
   const waterLevels: Record<number, number> = {
     30: 30,
     45: 45,
@@ -336,53 +373,99 @@ function Waterline({ frequency = 60, t }: { frequency?: number; t: any }) {
     90: 75,
     120: 88,
   };
-  const definedFreqs = Object.keys(waterLevels).map(Number);
-  const closest = definedFreqs.reduce((prev, curr) =>
-    Math.abs(curr - frequency) < Math.abs(prev - frequency) ? curr : prev
+  const defined = Object.keys(waterLevels).map(Number);
+  const closest = defined.reduce((p, c) =>
+    Math.abs(c - frequency) < Math.abs(p - frequency) ? c : p
   );
   const targetHeight = waterLevels[closest] ?? 60;
 
   return (
-    <div className="relative w-full h-[84px] rounded-2xl overflow-hidden border border-sky-100 bg-gradient-to-b from-sky-50 to-white">
+    <div className="relative w-full h-[86px] rounded-2xl overflow-hidden border border-sky-100 bg-gradient-to-b from-sky-50 to-white">
+      {/* water container */}
       <motion.div
-        initial={{ y: 84 }}
-        animate={{ y: 84 - targetHeight }}
+        initial={{ y: 86 }}
+        animate={{ y: 86 - targetHeight }}
         transition={{ type: "spring", stiffness: 70, damping: 12 }}
         className="absolute bottom-0 left-0 right-0"
       >
+        {/* Two counter-moving waves + highlight for a more “real” look */}
         <svg viewBox="0 0 600 120" preserveAspectRatio="none" className="w-full">
           <defs>
-            <linearGradient id="wl" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.5" />
-              <stop offset="100%" stopColor="#0ea5e9" stopOpacity="0.15" />
+            <linearGradient id="wlA" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.55" />
+              <stop offset="100%" stopColor="#0ea5e9" stopOpacity="0.2" />
             </linearGradient>
+            <linearGradient id="wlB" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.55" />
+              <stop offset="100%" stopColor="#0284c7" stopOpacity="0.22" />
+            </linearGradient>
+            <linearGradient id="gloss" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="white" stopOpacity="0.45" />
+              <stop offset="100%" stopColor="white" stopOpacity="0" />
+            </linearGradient>
+            <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="0.6" />
+            </filter>
           </defs>
+
+          {/* back wave */}
           <motion.path
-            d="M0,60 C120,20 240,100 360,70 C420,60 480,80 600,60 L600,120 L0,120 Z"
-            fill="url(#wl)"
+            fill="url(#wlA)"
+            d="M0,70 C120,45 240,90 360,65 C420,60 480,80 600,70 L600,120 L0,120 Z"
             animate={{
               d: [
-                "M0,60 C120,30 240,90 360,60 C420,50 480,80 600,60 L600,120 L0,120 Z",
-                "M0,60 C120,40 240,100 360,80 C420,70 480,90 600,60 L600,120 L0,120 Z",
+                "M0,70 C120,45 240,90 360,65 C420,60 480,80 600,70 L600,120 L0,120 Z",
+                "M0,72 C120,50 240,95 360,70 C420,62 480,85 600,72 L600,120 L0,120 Z",
               ],
             }}
             transition={{
-              repeat: Infinity,
-              repeatType: "reverse",
-              duration: 3.5,
+              duration: 4.2,
               ease: "easeInOut",
+              repeat: Infinity,
+              repeatType: "mirror",
             }}
+          />
+
+          {/* front wave */}
+          <motion.path
+            fill="url(#wlB)"
+            d="M0,66 C120,38 240,86 360,60 C420,56 480,76 600,66 L600,120 L0,120 Z"
+            animate={{
+              d: [
+                "M0,66 C120,38 240,86 360,60 C420,56 480,76 600,66 L600,120 L0,120 Z",
+                "M0,64 C120,36 240,84 360,58 C420,54 480,74 600,64 L600,120 L0,120 Z",
+              ],
+            }}
+            transition={{
+              duration: 3.2,
+              ease: "easeInOut",
+              repeat: Infinity,
+              repeatType: "mirror",
+            }}
+            style={{ filter: "url(#soft)" }}
+          />
+
+          {/* surface gloss */}
+          <motion.rect
+            x="0"
+            y="0"
+            width="600"
+            height="16"
+            fill="url(#gloss)"
+            opacity={0.5}
+            animate={{ opacity: [0.35, 0.6, 0.35] }}
+            transition={{ duration: 3.6, repeat: Infinity, ease: "easeInOut" }}
           />
         </svg>
       </motion.div>
 
-      <div className="absolute inset-0 flex items-end justify-center pb-1">
-        <div className="text-[11px] text-gray-500 select-none">{t.waterHint}</div>
+      {/* hint */}
+      <div className="absolute inset-0 flex items-end justify-center pb-0.5">
+        <div className="text-[10.5px] text-gray-500 select-none">{hint}</div>
       </div>
     </div>
   );
 }
-
 
 /* ---------------------- DECORATION ---------------------- */
 function WaveDecoration() {
@@ -400,65 +483,4 @@ function WaveDecoration() {
       />
     </svg>
   );
-}
-
-
-function Spinner({ className }: { className?: string }) {
-  return (
-    <svg className={`animate-spin ${className ?? ""}`} viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-    </svg>
-  );
-  
-  
-function Waterline({ frequency = 60 }: { frequency?: number }) {
-  const waterLevels: Record<number, number> = { 30: 30, 45: 45, 60: 60, 90: 75, 120: 88 };
-  const definedFreqs = Object.keys(waterLevels).map(Number);
-  const closest = definedFreqs.reduce((prev, curr) =>
-    Math.abs(curr - frequency) < Math.abs(prev - frequency) ? curr : prev
-  );
-  const targetHeight = waterLevels[closest] ?? 60;
-
-  return (
-    <div className="relative w-full h-[84px] rounded-2xl overflow-hidden border border-sky-100 bg-gradient-to-b from-sky-50 to-white">
-      <div className="absolute inset-0">
-        <motion.div
-          initial={{ y: 84 }}
-          animate={{ y: 84 - targetHeight }}
-          transition={{ type: "spring", stiffness: 70, damping: 12 }}
-          className="absolute bottom-0 left-0 right-0"
-        >
-          <svg viewBox="0 0 600 120" preserveAspectRatio="none" className="w-full" style={{ height: targetHeight }}>
-            <defs>
-              <linearGradient id="wl" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.5" />
-                <stop offset="100%" stopColor="#0ea5e9" stopOpacity="0.15" />
-              </linearGradient>
-            </defs>
-            <motion.path
-              d="M0,60 C120,20 240,100 360,70 C420,60 480,80 600,60 L600,120 L0,120 Z"
-              fill="url(#wl)"
-              animate={{
-                d: [
-                  "M0,60 C120,30 240,90 360,60 C420,50 480,80 600,60 L600,120 L0,120 Z",
-                  "M0,60 C120,40 240,100 360,80 C420,70 480,90 600,60 L600,120 L0,120 Z",
-                ],
-              }}
-              transition={{
-                repeat: Infinity,
-                repeatType: "reverse",
-                duration: 3.5,
-                ease: "easeInOut",
-              }}
-            />
-          </svg>
-        </motion.div>
-      </div>
-      <div className="absolute inset-0 flex items-end justify-center pb-1">
-        <div className="text-[11px] text-gray-500 select-none">Higher interval → fuller tank</div>
-      </div>
-    </div>
-  );
-}
 }
