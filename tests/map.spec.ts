@@ -36,8 +36,10 @@ test('renders header, recenter button and map area', async ({ page }) => {
 });
 
 test('shows nearby suggestions (demo fallback) and "Open in Maps" opens popup', async ({ page }) => {
-  // The demo suggestions contain the fallback name used in the page; wait for it
-  await expect(page.locator('text=SM City Tuguegarao')).toBeVisible({ timeout: 5000 });
+  // The demo suggestions contain the fallback name used in the page; wait for the exact heading
+  // Use a role-based, exact-heading locator to avoid strict-mode collisions when similar
+  // names (e.g. "Starbucks SM City Tuguegarao") appear.
+  await expect(page.getByRole('heading', { name: 'SM City Tuguegarao', exact: true })).toBeVisible({ timeout: 5000 });
 
   // Click the first "Open in Maps" button and expect a popup to open
   const openButtons = page.getByRole('button', { name: /Open in Maps|In Karten öffnen|在地图中打开/i });
@@ -55,16 +57,17 @@ test('shows nearby suggestions (demo fallback) and "Open in Maps" opens popup', 
 });
 
 test('"Navigate to Nearest" primary CTA opens directions popup', async ({ page }) => {
-  // Wait for demo suggestions to be present so nearest exists
-  await expect(page.locator('text=SM City Tuguegarao')).toBeVisible({ timeout: 5000 });
+  // Wait for demo suggestions to be present so nearest exists. Use exact heading match
+  await expect(page.getByRole('heading', { name: 'SM City Tuguegarao', exact: true })).toBeVisible({ timeout: 5000 });
 
-  const navBtn = page.getByRole('button', { name: /Navigate to Nearest|Navigate to nearest restroom|导航到最近的洗手间/i });
-  await expect(navBtn).toBeVisible();
-  await expect(navBtn).toBeEnabled();
+  // Primary CTA may include an icon; pick the first matching visible button
+  const navBtn = page.getByRole('button', { name: /Navigate to Nearest|Navigate to nearest restroom|导航到最近的洗手间|Navigate/i });
+  await expect(navBtn.first()).toBeVisible();
+  await expect(navBtn.first()).toBeEnabled();
 
   const [popup] = await Promise.all([
     page.waitForEvent('popup'),
-    navBtn.click(),
+    navBtn.first().click(),
   ]);
 
   await popup.waitForLoadState();
