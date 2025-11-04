@@ -62,9 +62,10 @@ const audioFiles = {
 
 // 🔑 Use HTTPS URL for production; fallback to localhost for dev
 const API_BASE =
-  typeof window !== "undefined" && window.location.hostname !== "localhost"
-    ? "https://peepal.site"
-    : "http://localhost:4000";
+  process.env.NEXT_PUBLIC_PUSH_SERVER_URL ||
+  (typeof window !== "undefined" && window.location.hostname !== "localhost"
+    ? "https://bathroomreminder-zij5.onrender.com"
+    : "http://localhost:4000");
 
 const VAPID_PUBLIC_KEY =
   "BP7eA1OBdmDkLxg6-YrorPyglWaOeXqC3fNCwjyeTvcYGJYj_eMTh1qkfVFEApzl1q-dWTbF0naJh9dauCLCWXg";
